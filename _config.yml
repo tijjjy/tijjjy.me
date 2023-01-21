@@ -1,0 +1,40 @@
+# Site settings
+title:          Tijjjy Blog
+description:    "Personal blog consisting of security and tech posts!"
+url:            https://github.com/tijjjy/tijjjy.me
+
+# Author
+author:
+  name:         Tijjjy
+  email:        
+  url:          https://tijjjy.me
+
+# Build settings
+markdown:       kramdown
+
+# Assets
+sass:
+  sass_dir:     _sass
+  style:        compressed
+
+# Gems
+plugins:
+  - jekyll-feed
+  - jekyll-paginate
+  # - jemoji #Uncomment this to allow emoji in your post
+
+# Permalinks
+permalink:      /:year-:month-:day/:title
+paginate:       5
+
+# Related posts settings
+related_posts_section:
+  max_count:        5
+  min_common_tags:  2
+
+# Links to social media
+social:
+  email: 
+  github: https://github.com/tijjjy
+  twitter: 
+  linkedin: 
