@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+    <meta name="description" content="Personal blog consisting of security and tech posts!">
+  
+
+  <title>
+    
+      Tijjjy Blog
+    
+  </title>
+
+  <!-- CSS -->
+  <link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.2.0/css/all.css" integrity="sha384-hWVjflwFxL6sNzntih27bfxkr27PmbbK/iSvJ+a4+0owXq79v+lsFkW54bOGbiDQ" crossorigin="anonymous">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
+
+  <!-- RSS -->
+  <link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Tijjjy Blog" />
+</head>
+
+
+  <body>
+    <nav class="nav">
+      <div class="nav-container">
+        <a href="/">
+          <h2 class="nav-title">Tijjjy Blog</h2>
+        </a>
+        <ul class="nav-social-icons">
+          
+          
+            <li><a target="_blank" href="https://github.com/tijjjy"><i class="fab fa-github"></i></a></li>
+          
+          
+          
+        </ul>
+      </div>
+    </nav>
+
+    <main>
+      <div class="catalogue">
+  
+    <a href="/2022-12-10/generate-selfsigned-ssl-cert-copy" class="catalogue-item">
+      <div>
+        <time datetime="2022-12-10 00:00:00 +0800" class="catalogue-time">December 10, 2022</time>
+        <h1 class="catalogue-title">Generate a self-signed SSL certificate and key</h1>
+        <div class="catalogue-line"></div>
+
+        <p>
+          To generate a quick and easy self signed certificate and private key, run the following command with any system that has openssl installed.
+
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 365 --nodes
+
+There is a code snipped of the command here -&gt; snippet
+
+        </p>
+
+      </div>
+    </a>
+  
+</div>
+
+<div class="pagination">
+  <div class="flex-container">
+    <div>
+      
+        <a href="/"><i class="fas fa-angle-left"></i>&nbspNewer</a>
+      
+    </div>
+    <div>
+      
+    </div>
+  </div>
+</div>
+
+    </main>
+
+    <footer>
+      <span>
+        &copy; <time datetime="2023-01-23 21:45:54 +0800">2023</time> Tijjjy. Powered by Jekyll and <a href="#">Rain</a> theme.
+      </span>
+    </footer>
+  </body>
+</html>

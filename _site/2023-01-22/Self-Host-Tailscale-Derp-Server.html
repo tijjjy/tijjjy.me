@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+
+  <title>
+    
+      Self Host Tailscale Derp Server &middot; Tijjjy Blog
+    
+  </title>
+
+  <!-- CSS -->
+  <link rel="stylesheet" href="/assets/main.css">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.2.0/css/all.css" integrity="sha384-hWVjflwFxL6sNzntih27bfxkr27PmbbK/iSvJ+a4+0owXq79v+lsFkW54bOGbiDQ" crossorigin="anonymous">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
+
+  <!-- RSS -->
+  <link type="application/atom+xml" rel="alternate" href="http://localhost:4000/feed.xml" title="Tijjjy Blog" />
+</head>
+
+
+  <body>
+    <nav class="nav">
+      <div class="nav-container">
+        <a href="/">
+          <h2 class="nav-title">Tijjjy Blog</h2>
+        </a>
+        <ul class="nav-social-icons">
+          
+          
+            <li><a target="_blank" href="https://github.com/tijjjy"><i class="fab fa-github"></i></a></li>
+          
+          
+          
+        </ul>
+      </div>
+    </nav>
+
+    <main>
+      <div class="post">
+
+  <div class="post-info">
+    
+      <time datetime="2023-01-22 00:00:00 +0800">January 22, 2023</time>
+    
+  </div>
+  <h1 class="post-title">
+    <div>Self Host Tailscale Derp Server</div>
+  </h1>
+
+  <h1 id="introduction">Introduction</h1>
+<p>Welcome to my post, today I’m going to show you how to deploy your own Tailscale DERP server using a docker container I built myself!</p>
+
+<p>For this demonstration and walkthrough I will be using Ubuntu 22.04 on a 1vcpu 1GB Memory VPS hosted on <a href="https://www.binarylane.com.au/">www.binarylane.com.au</a>. I highly recommened BinaryLane as they provide fast and reliable VPS solutions and even dedicated servers!</p>
+
+<h1 id="prerequisites">Prerequisites</h1>
+<ul>
+  <li>Linux Server</li>
+  <li>Docker (<a href="https://docs.docker.com/engine/install/">Docker Installation Docs</a>)</li>
+  <li>Git</li>
+  <li><a href="https://github.com/tijjjy/Tailscale-DERP-Docker">https://github.com/tijjjy/Tailscale-DERP-Docker</a></li>
+  <li>Ports 80,443 TCP Open</li>
+  <li>Port 3478 UDP Open</li>
+  <li>DNS Record for DERP domain name</li>
+  <li>Firewalld</li>
+  <li>Tailscale Account (<a href="https://login.tailscale.com/start">Create a Tailscale account</a>)</li>
+</ul>
+
+<h1 id="why-self-host-your-own-derp-server">Why self host your own DERP server?</h1>
+<p>There are a variety of reasons why you might want to run your own Tailscale DERP server, including but not limited to:</p>
+<ul>
+  <li>Organisations using Tailscale may have requirements regarding where network traffic goes.</li>
+  <li>Learning new skills and how DERP works.</li>
+  <li>Privacy reasons, you may want to have full control of the infrastructure.</li>
+</ul>
+
+<h1 id="installing-requirements">Installing Requirements</h1>
+<p>To get started lets update the system which on Ubuntu can be done with the following commands.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>apt update
+<span class="nb">sudo </span>apt upgrade <span class="nt">-y</span>
+</code></pre></div></div>
+<p>After the upgrades are installed it’s always best to reboot the server to reload into the latest linux kernal.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>reboot
+</code></pre></div></div>
+<p>Once your server is fully updated and finished rebooting, lets go and install Docker and Git</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>apt <span class="nb">install </span>docker docker-compose git <span class="nt">-y</span>
+</code></pre></div></div>
+<p>If you have trouble installing docker, you can find instructions for the linux distribution you are using at the official docker docs. <a href="https://docs.docker.com/engine/install/">https://docs.docker.com/engine/install</a></p>
+
+<p>Now to install the firewall, personally I use firewalld but this can be done with any firewall.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo apt install firewalld -y
+sudo systemctl enable --now firewalld
+</code></pre></div></div>
+
+<p>Additionally, we need to restart the docker daemon. When installing firewalld after docker the networking for docker needs to be restarted or all containers won’t have network connectivity due to installing a new firewall.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>systemctl restart docker
+</code></pre></div></div>
+
+<p>We can double check that firewalld is running by using the following command,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>systemctl status firewalld
+</code></pre></div></div>
+<p>You should see the following output.</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture1.png" alt="Firewalld status" /></p>
+
+<h1 id="setting-up-the-firewall">Setting Up the Firewall</h1>
+<p>We can check the default firewall rules by running,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>firewall-cmd <span class="nt">--list-all</span>
+</code></pre></div></div>
+<p>Which should output the default rules on the public zone.</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture2.png" alt="Default firewall rules" /></p>
+
+<p>Lets go ahead and open the required ports for our Tailscale DERP server.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>public <span class="nt">--permanent</span> <span class="nt">--add-port</span><span class="o">=</span>80/tcp
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>public <span class="nt">--permanent</span> <span class="nt">--add-port</span><span class="o">=</span>443/tcp
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>public <span class="nt">--permanent</span> <span class="nt">--add-port</span><span class="o">=</span>3478/udp
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--reload</span>
+</code></pre></div></div>
+
+<p>Checking the public zone again we can now see our rules have been added and are now open!</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture3.png" alt="New firewall rules" /></p>
+
+<h3 id="this-section-can-be-skipped-but-it-is-advised-for-extra-security">This section can be skipped but it is advised for extra security</h3>
+<p>For added security lets create a new firewalld zone for ssh and add our home IP to it, doing so will only allow our IP to connect via ssh and block all other IPs.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>firewall-cmd <span class="nt">--permanent</span> <span class="nt">--new-zone</span><span class="o">=</span>ssh
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>ssh <span class="nt">--permanent</span> <span class="nt">--set-target</span><span class="o">=</span>DROP
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>public <span class="nt">--permanent</span> <span class="nt">--remove-service</span><span class="o">=</span>ssh
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>ssh <span class="nt">--permanent</span> <span class="nt">--add-service</span><span class="o">=</span>ssh
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>ssh <span class="nt">--permanent</span> <span class="nt">--add-source</span><span class="o">=</span>youripaddress
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--reload</span>
+</code></pre></div></div>
+<p>Now your server is secured for ssh by only allowing your IP address to connect, as a backup it is good to make sure you can connect via KVM in your hosting provider incase your IP changes or you get locked out.</p>
+
+<h1 id="setting-the-dns-record">Setting the DNS Record</h1>
+<p>Before we configure and start our DERP server, we need to create a DNS record point to our server so that we can request a certificate from letsencrypt, the domain is also used in the Tailscale ACL for clients as well.</p>
+
+<p>Log into your Domain registrar and create an A record for the domain you want to use such as derp01.example.com thats points to the IP address of your server.</p>
+
+<p>For example,</p>
+<ul>
+  <li>derp01.example.com</li>
+  <li>A Record</li>
+  <li>1.1.1.1 (Using your own servers IP address of course)</li>
+</ul>
+
+<p>Once set, confirm the domain resolves to the IP address by running,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>dig derp01.example.com
+</code></pre></div></div>
+<p>OR</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nslookup derp01.example.com
+</code></pre></div></div>
+<p>Either command should return the IP address of your server.</p>
+
+<h1 id="generating-a-tailscale-auth-token">Generating a Tailscale Auth Token</h1>
+<p>To authenticate our DERP container to our tailnet we need to supply an initial authentication token to connect the container to our tailnet, this can be done by going to <a href="https://login.tailscale.com/admin/settings/keys">https://login.tailscale.com/admin/settings/keys</a>.</p>
+
+<p>Once you are logged into your Tailscale account you will see the “Auth Keys” section with the “Generate auth key…” button as seen below.</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture4.png" alt="Tailscale Auth Key Panel" /></p>
+
+<p>Go ahead and click on the “Generate auth key…”, it will open up a prompt for additional key options, just leave all defaults and click on the blue button at the bottom “Generate Key”.</p>
+
+<p>Copy and note the outputted key somewhere safe, we will use it in in the next few steps.</p>
+
+<h1 id="cloning-repo-and-setting-up-the-derp-config">Cloning Repo and Setting up the DERP config</h1>
+<p>Great, now we have an updated server with all the requirements installed. Lets go ahead and clone the repository containing the files for the DERP container.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">cd</span> /opt
+git clone https://github.com/tijjjy/Tailscale-DERP-Docker
+<span class="nb">cd </span>Tailscale-DERP-Docker
+<span class="nb">ls</span> <span class="nt">-lah</span>
+</code></pre></div></div>
+<p>We now have all the required files to configure, build and run our DERP server container.</p>
+
+<p>All we need to edit is the .env file, as this is where we will set our domain we want to use and our Tailscale Auth Key.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nano .env
+</code></pre></div></div>
+<p>OR</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>vim .env
+</code></pre></div></div>
+
+<p>Now we need to replace two variables,</p>
+<ul>
+  <li>TAILSCALE_DERP_HOSTNAME</li>
+  <li>TAILSCALE_AUTH_KEY</li>
+</ul>
+
+<p>For the TAILSCALE_DERP_HOSTNAME variable, replace the default value with the domain you set in your DNS records.</p>
+
+<p>For the TAILSCALE_AUTH_KEY variable, replace the default value with the Tailscale Auth Token you created and noted down before.</p>
+
+<p>If done correctly your .env file will look similar to the following screenshot.</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture5.png" alt="Tailscale Auth Key Panel" /></p>
+
+<h1 id="building-the-derp-container">Building the DERP container</h1>
+<p>Awesome, we are almost there, now all we need to do it build the docker container, this can be done like so,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker build <span class="nb">.</span> <span class="nt">-t</span> tailscale-derp-docker:1.0
+</code></pre></div></div>
+<h1 id="running-the-derp-container">Running the DERP container</h1>
+<p>Now that we have built our container lets go ahead and run it using docker compose.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker-compose up <span class="nt">-d</span>
+</code></pre></div></div>
+
+<p>We can monitor the container logs,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker logs <span class="nt">-f</span> tailscale-derp
+</code></pre></div></div>
+
+<p>To test if all is running good and the DERP server has a letsencrypt certificate, open your preferred browser and go to,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>https://derp01.example.com
+</code></pre></div></div>
+<p>Replacing example.com with the domain you set for the DERP server. If everything is good you will no TLS/SSl errors and see the default page like below,</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture7.png" alt="Testing DERP https" /></p>
+
+<h1 id="disabling-key-expiring-and-setting-tailscale-acl">Disabling Key Expiring and Setting Tailscale ACL</h1>
+<p>To stop the need to constantly keep generatng new auth keys for the DERP server when the current key expires, I would disable the key expiry for the newly created machine in your Tailnet. As seen below, go to your machine, click on the 3 dots and click on “Disable Key Expiry” to disable the key expiration.</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture6.png" alt="Disable Key expiry" /></p>
+
+<p>Following the Tailscale documention on how to set only use your DERP server, we can go ahead and set the following in our ACL. The snippet below needs to be placed under your other ACL rules, for example, mine is underneath the SSH ACL rules section. If you have trouble setting the ACl, the official Tailscale docs for this can be found here -&gt; <a href="https://tailscale.com/kb/1118/custom-derp-servers/#optional-removing-tailscales-derp-regions">Tailscale DERP ACL DOCS</a></p>
+
+<p>Remember to change the “HostName” section in the ACL to the domain you set for your DERP server.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	"derpMap": {
+		"OmitDefaultRegions": true,
+		"Regions": {
+			"900": {
+				"RegionID":   900,
+				"RegionCode": "derp01",
+				"Nodes": [
+					{
+						"Name":     "1",
+						"RegionID": 900,
+						"HostName": "derp01.example.com",
+					},
+				],
+			},
+		},
+	},
+</code></pre></div></div>
+
+<h1 id="testing-our-derp-server">Testing our DERP server</h1>
+<p>All that is left is to test our DERP server, we can use the built in tailscale ping command to ping a machine on our tailnet and confirm how it’s traffic is routed.</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>tailscale ping machinename
+</code></pre></div></div>
+
+<p>When you run the command, if you see the “via DERP(derp01)” then congratulations, you are now using your own DERP server for relay communications!</p>
+
+<p>I have blanked the IP and derp server name for privacy reasons.</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture8.png" alt="Testing DERP server" /></p>
+
+<h1 id="end">End</h1>
+<p>There you go, you now have your own DERP server for Tailscale running in a minimal small docker container. I hope you enjoyed this walkthrough!</p>
+
+<p>Thanks for reading.</p>
+
+<h1 id="links">Links</h1>
+<ul>
+  <li>Tailscale <a href="https://tailscale.com/">https://tailscale.com</a></li>
+  <li>BinaryLane <a href="https://www.binarylane.com.au/">https://www.binarylane.com.au</a></li>
+  <li>Github <a href="https://github.com/tijjjy">https://github.com/tijjjy</a></li>
+  <li>Github Repository <a href="https://github.com/tijjjy/Tailscale-DERP-Docker">https://github.com/tijjjy/Tailscale-DERP-Docker</a></li>
+</ul>
+
+
+</div>
+
+<div class="relatedPosts">
+
+  
+    
+    
+    
+    
+
+    
+
+      
+      
+
+      
+
+      
+
+    
+
+      
+      
+
+      
+
+      
+
+    
+
+      
+      
+
+      
+
+      
+
+    
+
+      
+      
+
+      
+
+      
+
+    
+
+      
+      
+
+      
+
+      
+
+    
+
+      
+      
+
+      
+
+      
+
+    
+
+    
+  
+
+</div>
+
+    </main>
+
+    <footer>
+      <span>
+        &copy; <time datetime="2023-01-23 21:45:54 +0800">2023</time> Tijjjy. Powered by Jekyll and <a href="#">Rain</a> theme.
+      </span>
+    </footer>
+  </body>
+</html>

