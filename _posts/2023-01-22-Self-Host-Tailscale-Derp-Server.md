@@ -16,7 +16,7 @@ For this demonstration and walkthrough I will be using Ubuntu 22.04 on a 1vcpu 1
 - Ports 80,443 TCP Open
 - Port 3478 UDP Open
 - DNS Record for DERP domain name
-- Firewalld
+- iptables, iptables-persistent
 - Tailscale Account ([Create a Tailscale account](https://login.tailscale.com/start))
 
 # Why self host your own DERP server?
@@ -41,58 +41,107 @@ sudo apt install docker docker-compose git -y
 ```
 If you have trouble installing docker, you can find instructions for the linux distribution you are using at the official docker docs. [https://docs.docker.com/engine/install](https://docs.docker.com/engine/install/)
 
-Now to install the firewall, personally I use firewalld but this can be done with any firewall.
+# Setting Up The Firewall
+Now to install the firewall, personally I use iptables but this can be done with any firewall.
+
+Run the command below if iptables is not installed.  
 ```
-sudo apt install firewalld -y
-sudo systemctl enable --now firewalld
+sudo apt install iptables iptables-persistent -y
 ```
 
-Additionally, we need to restart the docker daemon. When installing firewalld after docker the networking for docker needs to be restarted or all containers won't have network connectivity due to installing a new firewall.  
+Open up ipv4ruleset.rules.  
+```bash
+nano /opt/ipv4ruleset.rules
+```
+
+Paste in the following ruleset.  
+
+**IMPORTANT:** Change REPLACEWITHYOURIPHERE to your home IP address or the IP address that you want to allow SSH access. Copy and paste the line to allow additional IP addresses access to SSH.  
+```
+*filter
+
+-A INPUT -i lo -j ACCEPT
+-A INPUT ! -i lo -s 127.0.0.0/8 -j REJECT
+
+#SSH ACCESS
+-A INPUT -p tcp -s REPLACEWITHYOURIPHERE/32 --dport 22 -m state --state NEW -j ACCEPT
+
+#DERP SERVER PORTS
+-A INPUT -p tcp --dport 80 -m state --state NEW -j ACCEPT
+-A INPUT -p tcp --dport 443 -m state --state NEW -j ACCEPT
+-A INPUT -p udp --dport 3478 -m state --state NEW -j ACCEPT
+
+#Allow established connections and DROP everything else
+-A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+-A INPUT -j DROP
+
+#Create docker chains incase they are not already there
+-N DOCKER-USER
+-N DOCKER
+-N DOCKER-ISOLATION-STAGE-1
+-N DOCKER-ISOLATION-STAGE-2
+
+COMMIT
+
+```
+
+Save your changes to ipv4ruleset.rules and run the next 2 commands to apply the ruleset and save to the ruleset used on system startup.  
+```bash
+iptables-restore < /opt/ipv4ruleset.rules
+netfilter-persistent save
+```
+
+If your server has IPV6 connectivity, follow the next steps otherwise feel free to skip to where we restart the docker daemon.  
+
+Open up ipv6ruleset.rules.  
+```bash
+nano /opt/ipv6ruleset.rules
+```
+
+Paste in the following ruleset.   
+```
+*filter
+
+-A INPUT -i lo -j ACCEPT
+-A INPUT -s fe80::/64 -j ACCEPT
+
+#DERP SERVER PORTS
+-A INPUT -p tcp --dport 80 -m state --state NEW -j ACCEPT
+-A INPUT -p tcp --dport 443 -m state --state NEW -j ACCEPT
+-A INPUT -p udp --dport 3478 -m state --state NEW -j ACCEPT
+
+#Allow established connections and DROP everything else
+-A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+-A INPUT -j DROP
+
+#Create docker chains incase they are not already there
+-N DOCKER-USER
+-N DOCKER
+-N DOCKER-ISOLATION-STAGE-1
+-N DOCKER-ISOLATION-STAGE-2
+
+COMMIT
+
+```
+
+Again lets save your changes to ipv6ruleset.rules and run the next 2 commands to apply the ruleset and save to the ruleset used on system startup.  
+```bash
+ip6tables-restore < /opt/ipv6ruleset.rules
+netfilter-persistent save
+```
+
+To check all rules have been applied, you can run these two commands to check the IPV4 and IPV6 rules.  
+```bash
+iptables -nL
+ip6tables -nL
+```
+
+Now we have secured your server allowing SSH access to only your specified IP addresses and allowed new connections to the required DERP server ports. As a backup, it is good to make sure you can connect via KVM in your hosting provider incase your IP changes or you get locked out.  
+
+Additionally, we need to restart the docker daemon to allow it to re-create any internal iptables rules that docker requires to operate.   
 ```bash
 sudo systemctl restart docker
 ```
-
-We can double check that firewalld is running by using the following command,
-```bash
-sudo systemctl status firewalld
-```
-You should see the following output.  
-
-![Firewalld status](/images/posts/tailscalederpserver/picture1.png)
-
-# Setting Up the Firewall
-We can check the default firewall rules by running,
-```bash
-sudo firewall-cmd --list-all
-```
-Which should output the default rules on the public zone.  
-
-![Default firewall rules](/images/posts/tailscalederpserver/picture2.png)
-
-Lets go ahead and open the required ports for our Tailscale DERP server.
-```bash
-sudo firewall-cmd --zone=public --permanent --add-port=80/tcp
-sudo firewall-cmd --zone=public --permanent --add-port=443/tcp
-sudo firewall-cmd --zone=public --permanent --add-port=3478/udp
-sudo firewall-cmd --reload
-```
-
-Checking the public zone again we can now see our rules have been added and are now open!  
-
-![New firewall rules](/images/posts/tailscalederpserver/picture3.png)
- 
-### This section can be skipped but it is advised for extra security
-For added security lets create a new firewalld zone for ssh and add our home IP to it, doing so will only allow our IP to connect via ssh and block all other IPs.
-```bash
-sudo firewall-cmd --permanent --new-zone=ssh
-sudo firewall-cmd --zone=ssh --permanent --set-target=DROP
-sudo firewall-cmd --zone=public --permanent --remove-service=ssh
-sudo firewall-cmd --zone=ssh --permanent --add-service=ssh
-sudo firewall-cmd --zone=ssh --permanent --add-source=youripaddress
-sudo firewall-cmd --reload
-```
-Now your server is secured for ssh by only allowing your IP address to connect, as a backup it is good to make sure you can connect via KVM in your hosting provider incase your IP changes or you get locked out.  
-
 # Setting the DNS Record
 Before we configure and start our DERP server, we need to create a DNS record point to our server so that we can request a certificate from letsencrypt, the domain is also used in the Tailscale ACL for clients as well.  
 
@@ -102,6 +151,8 @@ For example,
 - derp01.example.com
 - A Record
 - 1.1.1.1 (Using your own servers IP address of course)
+
+Additionally the DNS record step adding in a record for the servers IPV6 Address.  
 
 Once set, confirm the domain resolves to the IP address by running,
 ```bash
@@ -122,7 +173,7 @@ Once you are logged into your Tailscale account you will see the "Auth Keys" sec
 
 Go ahead and click on the "Generate auth key...", it will open up a prompt for additional key options, just leave all defaults and click on the blue button at the bottom "Generate Key". 
 
-Copy and note the outputted key somewhere safe, we will use it in in the next few steps.  
+Copy and note the outputted key somewhere safe, we will use it in the next few steps.  
 
 # Cloning Repo and Setting up the DERP config
 Great, now we have an updated server with all the requirements installed. Lets go ahead and clone the repository containing the files for the DERP container.
@@ -188,22 +239,22 @@ Following the Tailscale documention on how to set only use your DERP server, we 
 
 Remember to change the "HostName" section in the ACL to the domain you set for your DERP server.  
 ```
-	"derpMap": {
-		"OmitDefaultRegions": true,
-		"Regions": {
-			"900": {
-				"RegionID":   900,
-				"RegionCode": "derp01",
-				"Nodes": [
-					{
-						"Name":     "1",
-						"RegionID": 900,
-						"HostName": "derp01.example.com",
-					},
-				],
-			},
+"derpMap": {
+	"OmitDefaultRegions": true,
+	"Regions": {
+		"900": {
+			"RegionID":   900,
+			"RegionCode": "derp01",
+			"Nodes": [
+				{
+					"Name":     "1",
+					"RegionID": 900,
+					"HostName": "derp01.example.com",
+				},
+			],
 		},
 	},
+},
 ```
 
 # Testing our DERP server
